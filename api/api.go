@@ -17,6 +17,7 @@ const (
 // capabilities
 
 type Indexer interface {
+	Name() string
 	Traits(operator interface{}) TraitInfo
 }
 
