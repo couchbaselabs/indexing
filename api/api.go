@@ -6,17 +6,18 @@ type Key []interface{}
 type Value interface{}
 
 type Interval int
+
 const (
-	open Interval = iota
-	closed        = iota
-	leftopen      = iota
-	rightopen     = iota
+	open      Interval = iota
+	closed             = iota
+	leftopen           = iota
+	rightopen          = iota
 )
 
 // capabilities
 
 type Indexer interface {
-	Traits(operator interface{}) TraitInfo 
+	Traits(operator interface{}) TraitInfo
 }
 
 type Exister interface {
@@ -25,7 +26,7 @@ type Exister interface {
 
 type Looker interface {
 	Exister
-	Lookup(key Key) chan Value 
+	Lookup(key Key) chan Value
 	Keyset() chan Key
 	Valueset() chan Value
 }
@@ -38,12 +39,14 @@ type Ranger interface {
 // promises
 
 type Constraint bool
+
 const (
-	Unique Constraint = true
-	NonUnique         = false
+	Unique    Constraint = true
+	NonUnique            = false
 )
 
 type SortOrder int
+
 const (
 	None SortOrder = iota
 	Asc            = iota
@@ -51,27 +54,29 @@ const (
 )
 
 type Complexity int
+
 const (
-	O1 Complexity = iota
-	Ologm         = iota
-	Ologn         = iota
-	Om            = iota
-	Omlogm        = iota
-	Omlogn        = iota
-	On            = iota
-	Onlogn        = iota
-	Om2           = iota
-	On2           = iota
+	O1     Complexity = iota
+	Ologm             = iota
+	Ologn             = iota
+	Om                = iota
+	Omlogm            = iota
+	Omlogn            = iota
+	On                = iota
+	Onlogn            = iota
+	Om2               = iota
+	On2               = iota
 )
 
 type Accuracy float64
+
 const (
 	Useless Accuracy = 0.0
 	Perfect          = 1.0
 )
 
 type TraitInfo struct {
-	unique     Constraint
+	constraint Constraint
 	order      SortOrder
 	accuracy   Accuracy
 	avgTime    Complexity
