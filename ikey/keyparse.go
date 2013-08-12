@@ -3,7 +3,7 @@ import "fmt"
 import "os"
 import "bytes"
 import "strconv"
-import "golib/parsec"
+import "github.com/prataprc/golib/parsec"
 
 type Terminal struct {
     Name string         // typically contains terminal's token type
