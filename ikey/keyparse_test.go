@@ -26,7 +26,7 @@ func TestSamplesort1(t *testing.T) {
     reftext := strings.Trim( string(bin), "\r\n" )
 
     // Convert keys to binary
-    for _, line := range Readlines("./examples/samplesort1") {
+    for _, line := range readlines("./examples/samplesort1") {
         out := Parse(line).Bytes()
         outs = append( outs, out )
     }
@@ -43,7 +43,7 @@ func TestSamplesort2(t *testing.T) {
     reftext := strings.Trim( string(bin), "\r\n" )
 
     // Convert keys to binary
-    for _, line := range Readlines("./examples/samplesort2") {
+    for _, line := range readlines("./examples/samplesort2") {
         out := Parse(line).Bytes()
         outs = append( outs, out )
     }
@@ -60,7 +60,7 @@ func TestSamplesort3(t *testing.T) {
     reftext := strings.Trim( string(bin), "\r\n" )
 
     // Convert keys to binary
-    for _, line := range Readlines("./examples/samplesort3") {
+    for _, line := range readlines("./examples/samplesort3") {
         out := Parse(line).Bytes()
         outs = append( outs, out )
     }
@@ -82,7 +82,7 @@ func sort( outs [][]byte ) [][]byte {
     return outs
 }
 
-func Readlines( filename string ) [][]byte {
+func readlines( filename string ) [][]byte {
     var lines = make( [][]byte, 0 )
     fd, _ := os.Open(filename)
     defer func(){ fd.Close() }()
