@@ -1,13 +1,13 @@
-package indexing
+package trivial
 
 import (
-	api "github.com/couchbaselabs/indexing/api"
-	"github.com/petar/GoLLRB/llrb"
+	"github.com/couchbaselabs/indexing/api"
+//	"github.com/petar/GoLLRB/llrb"
 	"reflect"
 )
 
 type Trivial struct {
-	tree llrb.LLRB
+//	tree llrb.LLRB
 }
 
 func (t *Trivial) Name() string {
@@ -28,7 +28,7 @@ func (t *Trivial) Traits(op interface{}) api.TraitInfo {
 
 		case reflect.TypeOf(t):
 		return api.TraitInfo {
-			Constraint: api.NonUnique,
+			Unique:     api.NonUnique,
 			Order:      api.Asc,
 			Accuracy:   api.Perfect,
 			AvgTime:    api.Ologn,
@@ -39,7 +39,7 @@ func (t *Trivial) Traits(op interface{}) api.TraitInfo {
 
 		case reflect.TypeOf((*Trivial).Exists):
 		return api.TraitInfo {
-			Constraint: api.NonUnique,
+			Unique:     api.NonUnique,
 			Order:      api.Asc,
 			Accuracy:   api.Perfect,
 			AvgTime:    api.Ologn,
@@ -50,7 +50,7 @@ func (t *Trivial) Traits(op interface{}) api.TraitInfo {
 
 		case reflect.TypeOf((*Trivial).Lookup):
 			return api.TraitInfo {
-				Constraint: api.NonUnique,
+				Unique:     api.NonUnique,
 				Order:      api.Asc,
 				Accuracy:   api.Perfect,
 				AvgTime:    api.Ologn,
