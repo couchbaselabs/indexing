@@ -5,13 +5,13 @@ package indexing
 type Key []interface{}
 type Value interface{}
 
-type Interval int
+type Inclusion int
 
 const (
-	open      Interval = iota
-	closed             = iota
-	leftopen           = iota
-	rightopen          = iota
+	Neither Inclusion = iota
+	Left              = iota
+	Right             = iota
+	Both              = iota
 )
 
 // capabilities
@@ -34,7 +34,8 @@ type Looker interface {
 
 type Ranger interface {
 	Looker
-	Range(low Key, high Key, interval Interval)
+	Keyrange(low Key, high Key, inclusion Inclusion) (chan Key, SortOrder)
+	Valuerange(low Key, high Key, inclusion Inclusion) (chan Value, SortOrder)
 }
 
 // promises
@@ -49,9 +50,9 @@ const (
 type SortOrder int
 
 const (
-	None SortOrder = iota
-	Asc            = iota
-	Desc           = iota
+	Unsorted SortOrder = iota
+	Asc                = iota
+	Desc               = iota
 )
 
 type Complexity int
@@ -67,6 +68,7 @@ const (
 	Onlogn            = iota
 	Om2               = iota
 	On2               = iota
+	Ounknown          = iota
 )
 
 type Accuracy float64
@@ -77,11 +79,11 @@ const (
 )
 
 type TraitInfo struct {
-	constraint Constraint
-	order      SortOrder
-	accuracy   Accuracy
-	avgTime    Complexity
-	avgSpace   Complexity
-	worstTime  Complexity
-	worstSpace Complexity
+	Constraint Constraint
+	Order      SortOrder
+	Accuracy   Accuracy
+	AvgTime    Complexity
+	AvgSpace   Complexity
+	WorstTime  Complexity
+	WorstSpace Complexity
 }
