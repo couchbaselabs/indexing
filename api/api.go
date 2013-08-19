@@ -3,20 +3,30 @@ package api
 import "github.com/couchbaselabs/tuqtng/ast"
 
 // Engineer is the interface into the index engine
-type Engineer interface {
-
-	// Types returns all known index types
-	Types() []Algorithm
+type Indexer interface {
 
 	// Create builds an instance of an index
-	Create(statement ast.Statement) (Instance, error)
+	Create(statement ast.Statement) (AccessPath, error)
 
 	// Drop kills an instance of an index
 	Drop(statement ast.Statement) error
 	
 	// Instances lists all known index instances
-	Instances() []Instance
+	Instances() []AccessPath
 }
+
+// AccessPath represents an instance of an index. Each CREATE INDEX statement
+// creates one finder instance logically.
+type AccessPath interface {
+
+	// The name of this index instance
+	Name() string
+	
+	// Type index type
+	Type() IndexType
+}
+
+
 
 // Key is an array of JSON objects, per encoding/json
 type Key []interface{}
@@ -24,13 +34,21 @@ type Key []interface{}
 // Value is the primary key of the relavent document
 type Value string
 
+// Known index types
+type IndexType int
+const (
+	View IndexType = iota
+	BTree
+	RBTree
+)
+
 // Inclusion controls how the boundaries values of a range are treated
 type Inclusion int
 const (
 	Neither Inclusion = iota
-	Left              = iota
-	Right             = iota
-	Both              = iota
+	Left
+	Right
+	Both
 )
 
 // Algorithm is the basic capability of any index algorithm
@@ -72,24 +90,24 @@ const (
 type SortOrder int
 const (
 	Unsorted SortOrder = iota
-	Asc                = iota
-	Desc               = iota
+	Asc
+	Desc
 )
 
 // Complexity characterizes space and time characteristics of the algorithm
 type Complexity int
 const (
-	O1     Complexity = iota
-	Ologm             = iota
-	Ologn             = iota
-	Om                = iota
-	Omlogm            = iota
-	Omlogn            = iota
-	On                = iota
-	Onlogn            = iota
-	Om2               = iota
-	On2               = iota
-	Ounknown          = iota
+	O1 Complexity = iota
+	Ologm
+	Ologn
+	Om
+	Omlogm
+	Omlogn
+	On
+	Onlogn
+	Om2
+	On2
+	Ounknown
 )
 
 // Accuracy characterizes if the results of the index is subject to probabilistic errors.
@@ -110,12 +128,4 @@ type TraitInfo struct {
 	AvgSpace   Complexity
 	WorstTime  Complexity
 	WorstSpace Complexity
-}
-
-// Finder represents an instance of an index. Each CREATE INDEX statement
-// creates one finder instance logically.
-type Instance struct {
-	Name       string
-	Definition ast.Statement
-	Type       Algorithm
 }
