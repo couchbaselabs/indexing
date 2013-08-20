@@ -9,16 +9,20 @@ import (
 )
 
 func main() {
-	var eng api.Indexer = engine.GetEngine()
+	var eng api.Indexer = engine.GetEngine("http://localhost:8091/")
 
-	unql := "CREATE VIEW INDEX test ON contacts(name)"
+	unql := "CREATE VIEW INDEX test ON beer-sample(name)"
 	parser := goyacc.NewUnqlParser()
 	stmt, err := parser.Parse(unql)
 	if err != nil {
 		panic(err)
 	}
 
-	eng.Create(stmt.(*ast.CreateIndexStatement))
+	err = eng.Create(stmt.(*ast.CreateIndexStatement))
+	if err != nil {
+		panic(err)
+	}
+
 	paths := eng.Indexes()
 	fmt.Println(paths)
 }

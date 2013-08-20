@@ -6,8 +6,8 @@ import (
 	"github.com/couchbaselabs/tuqtng/ast"
 )
 
-func GetEngine() api.Indexer {
-	return theEngine
+func GetEngine(url string) api.Indexer {
+	return newEngine(url)
 }
 
 func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
@@ -20,7 +20,10 @@ func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
 	// we'll have more types here
 	switch stmt.View {
 	case true:
-		var inst api.Accesser = view.NewViewIndex(stmt)
+		inst, err := view.NewViewIndex(stmt, this.server)
+		if err != nil {
+			return err
+		}
 		this.indexes[stmt.Name] = inst
 		return nil
 
@@ -62,6 +65,7 @@ func (this *engine) Index(name string) api.Accesser {
 type engine struct {
 	indexes map[string]api.Accesser
 	saves   chan int
+	server  string
 }
 
 type TestIndexInstance struct {
@@ -82,12 +86,11 @@ func (this *TestIndexInstance) Type() api.IndexType {
 	return this.itype
 }
 
-var theEngine api.Indexer = newEngine()
-
-func newEngine() api.Indexer {
+func newEngine(serverurl string) api.Indexer {
 	inst := new(engine)
 	inst.saves = make(chan int)
 	inst.indexes = make(map[string]api.Accesser)
+	inst.server = serverurl
 
 	inst.load()
 	go inst.saver()
