@@ -3,38 +3,50 @@ package engine
 import (
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/tuqtng/ast"
-	"os"
-	"encoding/gob"
+	"errors"
 )
-
-const indexdir = "index/"
-
 
 func GetEngine() api.Indexer {
 	return theEngine
 }
 
-type engine struct {
-	indexes []api.AccessPath
-	saves chan int
+func (eng *engine) Create(stmt *ast.CreateIndexStatement) error {
+	defer eng.save()
+	if _, present := eng.indexes[stmt.Name]; present {
+		return errors.New("Index by the same name already exists: " + stmt.Name)
+	}
+	inst := api.IndexInstance{Name: stmt.Name, Definition: stmt, Type: api.View}
+	eng.indexes[stmt.Name] = &inst
+	return nil
 }
 
-func (eng *engine) Create(statement ast.Statement) (api.AccessPath, error) {
+func (eng *engine) Drop(name string) error {
 	defer eng.save()
-	// switch (ast.View.Type)
-	inst := ViewInst{IdxInst{IName: "hello", Itype: api.View}}
-	eng.indexes = append (eng.indexes, &inst)
-	return &inst, nil
-	// end switch
-}
-
-func (eng *engine) Drop(statement ast.Statement) error {
-	defer eng.save()
+	inst := eng.indexes[name]
+	if inst == nil {
+		return errors.New("Index by the name does not exist: " + name)
+	}
+	delete(eng.indexes, name)
 	return nil
 }
 	
-func (eng *engine) Instances() []api.AccessPath {
-	return eng.indexes
+func (eng *engine) Indexes() []string {
+	rv := make([]string, len(eng.indexes))
+	pos := 0
+	for name := range eng.indexes {
+		rv[pos] = name
+		pos++
+	}
+	return rv
+}
+
+func (eng *engine) Index(name string) *api.IndexInstance {
+	return eng.indexes[name]
+}
+
+type engine struct {
+	indexes map[string]*api.IndexInstance
+	saves chan int
 }
 
 var theEngine api.Indexer = newEngine()
@@ -42,6 +54,8 @@ var theEngine api.Indexer = newEngine()
 func newEngine() api.Indexer {
 	inst := new(engine)
 	inst.saves = make(chan int)
+	inst.indexes = make(map[string]*api.IndexInstance)
+
 	inst.load()
 	go inst.saver()
 	return inst
@@ -54,48 +68,10 @@ func (eng *engine) save() {
 func (eng *engine) saver() {
 	for {
 		<- eng.saves
-		os.Mkdir(indexdir, 0700)
-		handle, err := os.OpenFile(indexdir + "engine.gob", os.O_TRUNC | os.O_CREATE | os.O_WRONLY, 0600)
-		if err != nil {
-			panic(err)
-		}
-	    enc := gob.NewEncoder(handle)
-	    gob.Register(*new(ViewInst))
-	    if err := enc.Encode(eng.indexes); err != nil {
-	    	panic(err)
-	    }
-		handle.Close()
+		// TODO
 	 }
 }
 
 func (eng *engine) load() {
-  handle, err := os.OpenFile(indexdir + "engine.gob", os.O_RDONLY, 0600)
-  if os.IsNotExist(err) {
-    return
-  }
-  if err != nil {
-  	panic(err)
-  }
-  defer handle.Close()
-  dec := gob.NewDecoder(handle)
-  if err := dec.Decode(eng.indexes); err != nil {
-  	panic(err)
-  }
-}
-
-type IdxInst struct {
-	IName string
-	Itype api.IndexType
-}
-
-type ViewInst struct {
-	IdxInst
-}
-
-func (ii *IdxInst) Name() string {
-	return ii.IName
-}
-	
-func (ii *IdxInst) Type() api.IndexType {
-	return ii.Itype
+	// TODO
 }

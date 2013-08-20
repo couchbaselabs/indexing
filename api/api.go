@@ -2,30 +2,35 @@ package api
 
 import "github.com/couchbaselabs/tuqtng/ast"
 
-// Engineer is the interface into the index engine
+// Indexer is the interface into the index engine
 type Indexer interface {
 
 	// Create builds an instance of an index
-	Create(statement ast.Statement) (AccessPath, error)
+	Create(statement *ast.CreateIndexStatement) error
 
 	// Drop kills an instance of an index
-	Drop(statement ast.Statement) error
+	Drop(name string) error
 	
 	// Instances lists all known index instances
-	Instances() []AccessPath
+	Indexes() []string
+	
+	// Gets a specific instance
+	Index(name string) *IndexInstance
 }
 
-// AccessPath represents an instance of an index. Each CREATE INDEX statement
-// creates one finder instance logically.
-type AccessPath interface {
+// IndexInstance represents an instance of an index. 
+// Issuing a CREATE INDEX statement will create one new IndexInstance.
+type IndexInstance struct {
 
 	// The name of this index instance
-	Name() string
+	Name string
 	
 	// Type index type
-	Type() IndexType
+	Type IndexType
+	
+	// Definition
+	Definition *ast.CreateIndexStatement
 }
-
 
 
 // Key is an array of JSON objects, per encoding/json
