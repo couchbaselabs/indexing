@@ -2,34 +2,49 @@ package engine
 
 import (
 	"github.com/couchbaselabs/indexing/api"
+	"github.com/couchbaselabs/indexing/view"
 	"github.com/couchbaselabs/tuqtng/ast"
-	"errors"
 )
 
 func GetEngine() api.Indexer {
 	return theEngine
 }
 
-func (eng *engine) Create(stmt *ast.CreateIndexStatement) error {
-	defer eng.save()
-	if _, present := eng.indexes[stmt.Name]; present {
-		return errors.New("Index by the same name already exists: " + stmt.Name)
+func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
+	defer this.save()
+
+	if _, present := this.indexes[stmt.Name]; present {
+		return api.DuplicateIndex
 	}
-	inst := api.IndexInstance{Name: stmt.Name, Definition: stmt, Type: api.View}
-	eng.indexes[stmt.Name] = &inst
+
+	// we'll have more types here
+	switch stmt.View {
+	case true:
+		var inst api.Accesser = view.NewViewIndex(stmt)
+		this.indexes[stmt.Name] = inst
+		return nil
+
+	case false:
+		var inst api.Accesser = &TestIndexInstance{iname: stmt.Name, idefn: stmt, itype: api.View}
+		this.indexes[stmt.Name] = inst
+		return nil
+	}
+
+	return api.NoSuchType
+}
+
+func (this *engine) Drop(name string) error {
+	defer this.save()
+
+	inst := this.indexes[name]
+	if inst == nil {
+		return api.NoSuchIndex
+	}
+
+	delete(this.indexes, name)
 	return nil
 }
 
-func (eng *engine) Drop(name string) error {
-	defer eng.save()
-	inst := eng.indexes[name]
-	if inst == nil {
-		return errors.New("Index by the name does not exist: " + name)
-	}
-	delete(eng.indexes, name)
-	return nil
-}
-	
 func (eng *engine) Indexes() []string {
 	rv := make([]string, len(eng.indexes))
 	pos := 0
@@ -40,13 +55,31 @@ func (eng *engine) Indexes() []string {
 	return rv
 }
 
-func (eng *engine) Index(name string) *api.IndexInstance {
-	return eng.indexes[name]
+func (this *engine) Index(name string) api.Accesser {
+	return this.indexes[name]
 }
 
 type engine struct {
-	indexes map[string]*api.IndexInstance
-	saves chan int
+	indexes map[string]api.Accesser
+	saves   chan int
+}
+
+type TestIndexInstance struct {
+	iname string
+	itype api.IndexType
+	idefn *ast.CreateIndexStatement
+}
+
+func (this *TestIndexInstance) Name() string {
+	return this.iname
+}
+
+func (this *TestIndexInstance) Defn() *ast.CreateIndexStatement {
+	return this.idefn
+}
+
+func (this *TestIndexInstance) Type() api.IndexType {
+	return this.itype
 }
 
 var theEngine api.Indexer = newEngine()
@@ -54,24 +87,24 @@ var theEngine api.Indexer = newEngine()
 func newEngine() api.Indexer {
 	inst := new(engine)
 	inst.saves = make(chan int)
-	inst.indexes = make(map[string]*api.IndexInstance)
+	inst.indexes = make(map[string]api.Accesser)
 
 	inst.load()
 	go inst.saver()
 	return inst
 }
 
-func (eng *engine) save() {
-	eng.saves <- 1
+func (this *engine) save() {
+	this.saves <- 1
 }
 
-func (eng *engine) saver() {
+func (this *engine) saver() {
 	for {
-		<- eng.saves
+		<-this.saves
 		// TODO
-	 }
+	}
 }
 
-func (eng *engine) load() {
+func (this *engine) load() {
 	// TODO
 }
