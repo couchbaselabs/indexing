@@ -62,14 +62,18 @@ func Create(conf Config) *Store {
     // Index store
     store.idxStore.rfd = openRfd(conf.idxfile)
     store.idxStore.wfd = openWfd(conf.idxfile, os.O_WRONLY, 0660)
+
     // Setup the index head and freelist
     store.head = newHead(store)
     store.freelist = newFreeList(store)
     // Setup the head and freelist on disk.
     offsets := store.appendBlocks( store.flistsize / OFFSET_SIZE )
-    root := offsets[0]
-    store.head.setRoot( root )
     store.freelist.add( offsets[1:] ).flush()
+
+    // Setup root node.
+    store.flushNode( &knode{}.newNode( store, offsets[0] ))
+    store.head.setRoot( offset[0] )
+
     // Launch go-routine to serialize append to KV store.
     store.kvStore.wfd.Seek(0, os.SEEK_END)
     store.writech = make(chan interface{})
@@ -86,10 +90,16 @@ func (store *Store) Close() {
 }
 
 func (store *Store) Root() Node {
-    return store.fetchNode( store.head.root )
+    store.fetchNode( store.head.root )
 }
 
 func (store *Store) fetchNode(fpos int64) Node {
+    // If this node is already dirty and available in copy-on-write cache.
+    if node := dirtyblocks[fpos]; node != nil {
+        return node
+    }
+
+    // Fetch the prestine block from the disk and make a key-node or i-node.
     data := make([]byte, store.blocksize)
     if _, err := store.idxStore.rfd.ReadAt(data, fpos); err != nil {
         panic(err.Error())
@@ -107,7 +117,7 @@ func (store *Store) fetchNode(fpos int64) Node {
 
 func (store *Store) flushNode( node Node ) *Store {
     var kn *knode
-    buf := bytes.NewBuffer( []byte{} )
+    buf := bytes.NewBuffer( make( []byte, store.blocksize ))
     if in, ok := node.(*inode); ok {
         kn = &in.knode
     } else {
@@ -159,6 +169,15 @@ func (store *Store) appendBlocks( count int64 ) []int64 {
         panic(err.Error())
     }
     return offsets
+}
+
+func (store *Store) maxKeys() uint64 {
+    max := (kn.store.blocksize-BLK_OVERHEAD) / (BLK_KEY_SIZE+BLK_VALUE_SIZE)
+    if max % 2 == 0 {
+        return max
+    } else {
+        return max-1
+    }
 }
 
 //---- local functions

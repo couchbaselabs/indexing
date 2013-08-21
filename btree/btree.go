@@ -1,5 +1,7 @@
 package btree
 
+type Interface interface{}
+type Emitter func([]byte)
 type Config struct {
     idxfile string
     kvfile string
@@ -25,8 +27,23 @@ type Indexer interface {
     DocidSet() <-chan []byte
     ValueSet() <-chan []byte
     Insert(Key, Value) bool
+    Lookup(Key) (chan []byte, error)
+    Range(Key, Key) (chan []byte, error)
     Remove(Key) bool
 }
+
+type Key interface {
+    Bytes() []byte
+    Docid() []byte
+    Control() uint32
+    Less( []byte ) bool
+    Equal( []byte, []byte ) (bool, bool)
+}
+
+type Value interface {
+    Bytes() []byte
+}
+
 
 func NewBTree(store *Store) *BTree {
     btree := BTree{ Config:store.Config, store:store, root:store.Root() }
@@ -91,44 +108,51 @@ func (bt *BTree) ValueSet() <-chan []byte {
     return c
 }
 
-//func (bt *BTree) Insert(k Key, v Value) bool {
-//    added, spawn, val := bt.root.insert(k, v)
-//    if added == false {
-//        return false
-//    }
-//    if spawn == nil {
-//        return true
-//    }
-//    max := (bt.blocksize-BLK_OVERHEAD) / (BLK_KEY_SIZE+BLK_VALUE_SIZE)
-//    root := new(inode)
-//    root.child = make([]bNode, max+2)[0:0]
-//    root.key = make([]T, max+1)[0:0]
-//
-//    root.child = root.child[0:2]
-//    root.child[0] = t.node
-//    root.child[1] = spawn
-//    root.key = root.key[0:1]
-//    root.key[0] = val
-//    t.node = root
-//    return true
-//}
-//
-//func (index *Store) Remove(key Key) bool {
-//    root := index.root
-//    if root.size == 0 {
-//        return false
-//    }
-//    if !index.root.remove(key)  {
-//        return false
-//    }
-//    root.size--
-//    if inode, ok := root.(*inode); ok {
-//      if inode.lenKeys() == 0 {
-//        index.root = inode.child[0]
-//      }
-//    }
-//    return true
-//}
+func (bt *BTree) Insert(k Key, v Value) bool {
+    root, spawn, median := bt.root.insert(k, v)
+    if spawn == nil {
+        bt.root = bt.root
+        return true
+    }
+    fpos := bt.store.freelist.pop()
+    in := inode{}.newNode(bt.store, fpos)
+    in.ks := []key{ median }
+    in.vs := []int64{ root.getKnode().fpos, spawn.getKnode().fpos }
+    in.size := len(in.ks)
+    bt.root := in
+    dirtyblocks[fpos] = in
+    return true
+}
+
+func (bt *BTree) Lookup(key Key) chan []byte {
+    c := make(chan []byte)
+    emit := func(val []byte) {
+        if val == nil {
+            close(c)
+        } else {
+            c <- val
+        }
+    }
+    go bt.root.lookup(key, emit)
+    return c
+}
+
+func (index *Store) Remove(key Key) bool {
+    root := index.root
+    if root.size == 0 {
+        return false
+    }
+    if !index.root.remove(key)  {
+        return false
+    }
+    root.size--
+    if inode, ok := root.(*inode); ok {
+      if inode.lenKeys() == 0 {
+        index.root = inode.child[0]
+      }
+    }
+    return true
+}
 //
 //func (index *Store) Show() {
 //    index.root.show(0)
