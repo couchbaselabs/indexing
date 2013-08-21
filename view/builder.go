@@ -1,11 +1,12 @@
 package view
 
 import (
-	"fmt"
 	"github.com/couchbaselabs/go-couchbase"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/tuqtng/ast"
 	"regexp"
+	"fmt"
+	"bytes"
 )
 
 type viewindex struct {
@@ -35,17 +36,51 @@ func NewViewIndex(stmt *ast.CreateIndexStatement, url string) (*viewindex, error
 
 func newDesignDoc(stmt *ast.CreateIndexStatement, url string) (*designdoc, error) {
 	var doc designdoc
-	err := generateJS(stmt, &doc)
+	err := generateMap(stmt, &doc)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println(doc.mapfn)
+	err = generateReduce(stmt, &doc)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println(doc.reducefn)
 	return &doc, nil
 }
 
-func generateJS(stmt *ast.CreateIndexStatement, doc *designdoc) error {
+func generateMap(stmt *ast.CreateIndexStatement, doc *designdoc) error {
+	buf := new(bytes.Buffer)
+	leader := ""
+	fmt.Fprintln(buf, leader, "function (doc, meta) {")
+	leader = "  "
+	
+	vals := new(bytes.Buffer)
+	for idx, expr := range stmt.On {
+		walker := NewWalker()
+		_, err := walker.Visit(expr)
+		if err != nil {
+			panic(err)
+		}
+
+		jvar := fmt.Sprintf("val%v", idx + 1)
+		if (vals.Len() > 0) {		
+			fmt.Fprintf(vals, "%s", ", ")
+		}
+
+		fmt.Fprintf(vals, "%s", jvar)		
+		fmt.Fprintln(buf, leader, "var", jvar, "=", walker.JS() + ";")  
+	}
+	
+	leader = ""
+	fmt.Fprintln(buf, leader, "}")
+	doc.mapfn = buf.String()
+	return nil
+}
+
+func generateReduce(stmt *ast.CreateIndexStatement, doc *designdoc) error {
 	// TODO
-	doc.mapfn = `function (doc, meta) {emit(meta.id, null);}`
-	doc.reducefn = ``
+	doc.reducefn = ""
 	return nil
 }
 
@@ -88,35 +123,7 @@ func sameCode(left, right string) bool {
 	rx, _ := regexp.Compile(`\s+`)
 	tl := rx.ReplaceAllLiteralString(left, "")
 	tr := rx.ReplaceAllLiteralString(right, "")
-	fmt.Println("tl", tl, "tr", tr)
 	return tr == tl
-}
-
-var buckets map[string]*couchbase.Bucket = make(map[string]*couchbase.Bucket)
-
-func getBucketForIndex(idx *viewindex) (*couchbase.Bucket, error) {
-
-	if cached := buckets[idx.url]; cached != nil {
-		return cached, nil
-	}
-
-	cb, err := couchbase.Connect(idx.url)
-	if err != nil {
-		return nil, err
-	}
-
-	pool, err := cb.GetPool("default")
-	if err != nil {
-		return nil, err
-	}
-
-	bucket, err := pool.GetBucket(idx.defn.Bucket)
-	if err != nil {
-		return nil, err
-	}
-
-	buckets[idx.url] = bucket
-	return bucket, nil
 }
 
 func (this *viewindex) Name() string {

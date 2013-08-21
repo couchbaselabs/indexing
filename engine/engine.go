@@ -20,7 +20,7 @@ func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
 
 	switch strings.ToLower(stmt.Method) {
 
-	case "view":
+	case "", "view":
 		inst, err := view.NewViewIndex(stmt, this.server)
 		if err != nil {
 			return err
@@ -28,7 +28,7 @@ func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
 		this.indexes[stmt.Name] = inst
 		return nil
 
-	case "":
+	case "test":
 		var inst api.Accesser = &TestIndexInstance{iname: stmt.Name, idefn: stmt, itype: api.View}
 		this.indexes[stmt.Name] = inst
 		return nil
