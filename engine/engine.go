@@ -4,6 +4,7 @@ import (
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/view"
 	"github.com/couchbaselabs/tuqtng/ast"
+	"strings"
 )
 
 func GetEngine(url string) api.Indexer {
@@ -17,9 +18,9 @@ func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
 		return api.DuplicateIndex
 	}
 
-	// we'll have more types here
-	switch stmt.View {
-	case true:
+	switch strings.ToLower(stmt.Method) {
+
+	case "view":
 		inst, err := view.NewViewIndex(stmt, this.server)
 		if err != nil {
 			return err
@@ -27,13 +28,14 @@ func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
 		this.indexes[stmt.Name] = inst
 		return nil
 
-	case false:
+	case "":
 		var inst api.Accesser = &TestIndexInstance{iname: stmt.Name, idefn: stmt, itype: api.View}
 		this.indexes[stmt.Name] = inst
 		return nil
-	}
 
-	return api.NoSuchType
+	default:
+		return api.NoSuchType
+	}
 }
 
 func (this *engine) Drop(name string) error {

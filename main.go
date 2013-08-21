@@ -11,7 +11,7 @@ import (
 func main() {
 	var eng api.Indexer = engine.GetEngine("http://localhost:8091/")
 
-	unql := "CREATE VIEW INDEX test ON beer-sample(name)"
+	unql := "CREATE INDEX test ON beer-sample(name) USING viewx"
 	parser := goyacc.NewUnqlParser()
 	stmt, err := parser.Parse(unql)
 	if err != nil {
