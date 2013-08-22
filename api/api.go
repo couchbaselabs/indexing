@@ -80,15 +80,15 @@ type Exister interface {
 type Looker interface {
 	Exister
 	Lookup(key Key) (chan Value, chan error)
-	Keyset() (chan Key, chan error)
-	Valueset() (chan Value, chan error)
+	KeySet() (chan Key, chan error)
+	ValueSet() (chan Value, chan error)
 }
 
 // Ranger is a class of algorithms that can extract a range of keys from the index.
 type Ranger interface {
 	Looker
-	Keyrange(low Key, high Key, inclusion Inclusion) (chan Key, chan error, SortOrder)
-	Valuerange(low Key, high Key, inclusion Inclusion) (chan Value, chan error, SortOrder)
+	KeyRange(low Key, high Key, inclusion Inclusion) (chan Key, chan error, SortOrder)
+	ValueRange(low Key, high Key, inclusion Inclusion) (chan Value, chan error, SortOrder)
 }
 
 // RangeCounter is a class of algorithms that can count a range efficiently

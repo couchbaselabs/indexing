@@ -24,5 +24,8 @@ func main() {
 	}
 
 	paths := eng.Indexes()
-	fmt.Println(paths)
+	for _, name := range paths {
+		path := eng.Index(name)
+		fmt.Println(path.Name())
+	}
 }
