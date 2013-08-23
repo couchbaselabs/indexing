@@ -11,9 +11,14 @@ import (
 func main() {
 	var eng api.Indexer = engine.GetEngine("http://localhost:8091/")
 
-	unql := "CREATE INDEX test ON beer-sample(name.foo[2].bar, 23) USING view"
+	unql := "CREATE INDEX tester ON beer-sample(name, abv) USING view"
 	parser := goyacc.NewUnqlParser()
 	stmt, err := parser.Parse(unql)
+	if err != nil {
+		panic(err)
+	}
+
+	err = eng.Create(stmt.(*ast.CreateIndexStatement))
 	if err != nil {
 		panic(err)
 	}

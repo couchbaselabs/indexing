@@ -6,7 +6,7 @@ import (
 
 var buckets map[string]*couchbase.Bucket = make(map[string]*couchbase.Bucket)
 
-func getBucketForIndex(idx *viewindex) (*couchbase.Bucket, error) {
+func getBucketForIndex(idx *ViewIndex) (*couchbase.Bucket, error) {
 
 	if cached := buckets[idx.url]; cached != nil {
 		return cached, nil

@@ -7,9 +7,18 @@ import (
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/tuqtng/ast"
 	"regexp"
+	"strings"
 )
 
-type viewindex struct {
+type putView struct {
+	Map    string `json:"map"`
+}
+
+type putRequest struct {
+	Views  map[string]putView `json:"views"`
+}
+
+type ViewIndex struct {
 	defn *ast.CreateIndexStatement
 	ddoc *designdoc
 	url  string
@@ -20,14 +29,14 @@ type designdoc struct {
 	reducefn string
 }
 
-func NewViewIndex(stmt *ast.CreateIndexStatement, url string) (*viewindex, error) {
+func NewViewIndex(stmt *ast.CreateIndexStatement, url string) (*ViewIndex, error) {
 
 	doc, err := newDesignDoc(stmt, url)
 	if err != nil {
 		return nil, err
 	}
 
-	inst := viewindex{
+	inst := ViewIndex{
 		defn: stmt,
 		ddoc: doc,
 		url:  url,
@@ -58,32 +67,39 @@ func newDesignDoc(stmt *ast.CreateIndexStatement, url string) (*designdoc, error
 }
 
 func generateMap(stmt *ast.CreateIndexStatement, doc *designdoc) error {
-	buf := new(bytes.Buffer)
-	leader := ""
-	fmt.Fprintln(buf, leader, "function (doc, meta) {")
-	leader = "  "
 
-	vals := new(bytes.Buffer)
+	buf := new(bytes.Buffer)
+	
+	fmt.Fprintln(buf, templStart)
+	fmt.Fprintln(buf, templFunctions)
+
+	keylist := new(bytes.Buffer)
 	for idx, expr := range stmt.On {
+
 		walker := NewWalker()
 		_, err := walker.Visit(expr)
 		if err != nil {
 			panic(err)
 		}
 
-		jvar := fmt.Sprintf("val%v", idx+1)
-		if vals.Len() > 0 {
-			fmt.Fprintf(vals, "%s", ", ")
+		jvar := fmt.Sprintf("key%v", idx+1) 
+		line := strings.Replace(templExpr, "$var", jvar, -1)
+		line = strings.Replace(line, "$path", walker.JS(), -1)
+		fmt.Fprint(buf, line)
+	
+		if idx > 0 {
+			fmt.Fprint(keylist, ", ")
 		}
-		fmt.Fprintf(vals, "%s", jvar)
-		fmt.Fprintln(buf, leader, "var", jvar, "=", walker.JS()+";")
+		fmt.Fprint(keylist, jvar)
 	}
 
-	fmt.Fprintf(buf, "%s emit([%s], meta.id);\n", leader, vals)
-
-	leader = ""
-	fmt.Fprintln(buf, leader, "}")
+	line := strings.Replace(templKey, "$keylist", keylist.String(), -1)
+	fmt.Fprint(buf, line)
+	fmt.Fprint(buf, templEmit)
+	fmt.Fprint(buf, templEnd) 
 	doc.mapfn = buf.String()
+	
+	fmt.Println(doc.mapfn)
 	return nil
 }
 
@@ -93,22 +109,21 @@ func generateReduce(stmt *ast.CreateIndexStatement, doc *designdoc) error {
 	return nil
 }
 
-func (idx *viewindex) putDesignDoc() error {
+
+func (idx *ViewIndex) putDesignDoc() error {
 	bucket, err := getBucketForIndex(idx)
 	if err != nil {
 		return err
 	}
 
-	var view couchbase.ViewDefinition
+	var view putView
 	view.Map = idx.ddoc.mapfn
-	view.Reduce = idx.ddoc.reducefn
 
-	var ddoc couchbase.DDocJSON
-	ddoc.Language = "javascript"
-	ddoc.Views = make(map[string]couchbase.ViewDefinition)
-	ddoc.Views[idx.ViewName()] = view
+	var put putRequest
+	put.Views = make(map[string]putView)
+	put.Views[idx.ViewName()] = view
 
-	if err := bucket.PutDDoc(idx.DDocName(), &ddoc); err != nil {
+	if err := bucket.PutDDoc(idx.DDocName(), &put); err != nil {
 		return err
 	}
 
@@ -117,10 +132,11 @@ func (idx *viewindex) putDesignDoc() error {
 		return api.DDocCreateFailed
 	}
 
+	fmt.Println("Created view:", idx.Name())
 	return nil
 }
 
-func (idx *viewindex) checkDesignDoc() error {
+func (idx *ViewIndex) checkDesignDoc() error {
 	bucket, err := getBucketForIndex(idx)
 	if err != nil {
 		return err
@@ -147,11 +163,11 @@ func (idx *viewindex) checkDesignDoc() error {
 	return nil
 }
 
-func (idx *viewindex) DDocName() string {
+func (idx *ViewIndex) DDocName() string {
 	return "dev_" + idx.Name()
 }
 
-func (idx *viewindex) ViewName() string {
+func (idx *ViewIndex) ViewName() string {
 	return "autogen"
 }
 
@@ -162,14 +178,14 @@ func sameCode(left, right string) bool {
 	return tr == tl
 }
 
-func (this *viewindex) Name() string {
+func (this *ViewIndex) Name() string {
 	return this.defn.Name
 }
 
-func (this *viewindex) Defn() *ast.CreateIndexStatement {
+func (this *ViewIndex) Defn() *ast.CreateIndexStatement {
 	return this.defn
 }
 
-func (this *viewindex) Type() api.IndexType {
+func (this *ViewIndex) Type() api.IndexType {
 	return api.View
 }
