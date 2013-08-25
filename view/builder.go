@@ -163,8 +163,23 @@ func (idx *ViewIndex) checkDesignDoc() error {
 	return nil
 }
 
+func (idx *ViewIndex) DropViewIndex() error {
+	bucket, err := getBucketForIndex(idx)
+	if err != nil {
+		return err
+	}
+	
+	if err := bucket.DeleteDDoc(idx.DDocName()); err != nil {
+		return err
+	}
+	
+	fmt.Println("Dropped", idx.Name())
+	
+	return nil
+}
+
 func (idx *ViewIndex) DDocName() string {
-	return "dev_" + idx.Name()
+	return "query_" + idx.Name()
 }
 
 func (idx *ViewIndex) ViewName() string {

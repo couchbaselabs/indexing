@@ -45,10 +45,17 @@ func (this *engine) Drop(name string) error {
 	if inst == nil {
 		return api.NoSuchIndex
 	}
-
+	
+	switch tinst := inst.(type) {
+		case *view.ViewIndex:
+			if err:= tinst.DropViewIndex(); err != nil {
+				return err
+			}
+	}
+	
 	delete(this.indexes, name)
 	return nil
-}
+} 
 
 func (eng *engine) Indexes() []string {
 	rv := make([]string, len(eng.indexes))

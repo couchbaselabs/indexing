@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/engine"
 	"github.com/couchbaselabs/tuqtng/ast"
@@ -23,14 +24,16 @@ func main() {
 		panic(err)
 	}
 
-	err = eng.Create(stmt.(*ast.CreateIndexStatement))
-	if err != nil {
-		panic(err)
-	}
-
 	paths := eng.Indexes()
 	for _, name := range paths {
 		path := eng.Index(name)
 		fmt.Println(path.Name())
+	}
+	
+	time.Sleep(3 * time.Second)
+	
+	err = eng.Drop("tester")
+	if err != nil {
+		panic(err)
 	}
 }
