@@ -32,7 +32,7 @@ func main() {
 
 	time.Sleep(3 * time.Second)
 
-	unql = "DROP INDEX beer-sample.testexr"
+	unql = "DROP INDEX beer-sample.tester"
 	stmt, err = parser.Parse(unql)
 	if err != nil {
 		panic(err)

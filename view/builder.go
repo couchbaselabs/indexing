@@ -6,9 +6,16 @@ import (
 	"github.com/couchbaselabs/go-couchbase"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/tuqtng/ast"
-	"regexp"
 	"strings"
+	"hash/crc32"
 )
+
+type DDocIndex struct {
+	couchbase.DDocJSON
+	DDLDefinition string `json:"ddlDefinition,omitempty"`
+	DDLChecksum int      `json:"ddlChecksum,omitempty"`
+}
+
 
 type ViewIndex struct {
 	defn *ast.CreateIndexStatement
@@ -110,10 +117,11 @@ func (idx *ViewIndex) putDesignDoc() error {
 	var view couchbase.ViewDefinition
 	view.Map = idx.ddoc.mapfn
 
-	var put couchbase.DDocJSON
+	var put DDocIndex
 	put.Views = make(map[string]couchbase.ViewDefinition)
 	put.Views[idx.ViewName()] = view
-
+	put.DDLChecksum = idx.createChecksum()
+	
 	if err := bucket.PutDDoc(idx.DDocName(), &put); err != nil {
 		return err
 	}
@@ -127,30 +135,32 @@ func (idx *ViewIndex) putDesignDoc() error {
 	return nil
 }
 
+func (idx *ViewIndex) createChecksum() int {
+	mapSum := crc32.ChecksumIEEE([]byte(idx.ddoc.mapfn))
+	reduceSum := crc32.ChecksumIEEE([]byte(idx.ddoc.reducefn))
+	return int(mapSum + reduceSum)
+}
+
+func (idx *ViewIndex) verifyChecksum(actual int) bool {
+	expected := idx.createChecksum() 
+	return (expected == actual)
+}
+
 func (idx *ViewIndex) checkDesignDoc() error {
 	bucket, err := getBucketForIndex(idx)
 	if err != nil {
 		return err
 	}
 
-	var ddoc couchbase.DDocJSON
+	var ddoc DDocIndex
 	if err := bucket.GetDDoc(idx.DDocName(), &ddoc); err != nil {
 		return err
 	}
 
-	view, ok := ddoc.Views[idx.ViewName()]
-	if !ok {
+	if !idx.verifyChecksum(ddoc.DDLChecksum) {
 		return api.DDocChanged
 	}
-
-	if !sameCode(view.Map, idx.ddoc.mapfn) {
-		return api.DDocChanged
-	}
-
-	if !sameCode(view.Reduce, idx.ddoc.reducefn) {
-		return api.DDocChanged
-	}
-
+	
 	return nil
 }
 
@@ -175,13 +185,6 @@ func (idx *ViewIndex) DDocName() string {
 
 func (idx *ViewIndex) ViewName() string {
 	return "autogen"
-}
-
-func sameCode(left, right string) bool {
-	rx, _ := regexp.Compile(`\s+`)
-	tl := rx.ReplaceAllLiteralString(left, "")
-	tr := rx.ReplaceAllLiteralString(right, "")
-	return tr == tl
 }
 
 func (this *ViewIndex) Name() string {
