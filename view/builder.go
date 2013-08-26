@@ -10,14 +10,6 @@ import (
 	"strings"
 )
 
-type putView struct {
-	Map    string `json:"map"`
-}
-
-type putRequest struct {
-	Views  map[string]putView `json:"views"`
-}
-
 type ViewIndex struct {
 	defn *ast.CreateIndexStatement
 	ddoc *designdoc
@@ -69,7 +61,7 @@ func newDesignDoc(stmt *ast.CreateIndexStatement, url string) (*designdoc, error
 func generateMap(stmt *ast.CreateIndexStatement, doc *designdoc) error {
 
 	buf := new(bytes.Buffer)
-	
+
 	fmt.Fprintln(buf, templStart)
 	fmt.Fprintln(buf, templFunctions)
 
@@ -82,11 +74,11 @@ func generateMap(stmt *ast.CreateIndexStatement, doc *designdoc) error {
 			panic(err)
 		}
 
-		jvar := fmt.Sprintf("key%v", idx+1) 
+		jvar := fmt.Sprintf("key%v", idx+1)
 		line := strings.Replace(templExpr, "$var", jvar, -1)
 		line = strings.Replace(line, "$path", walker.JS(), -1)
 		fmt.Fprint(buf, line)
-	
+
 		if idx > 0 {
 			fmt.Fprint(keylist, ", ")
 		}
@@ -96,9 +88,9 @@ func generateMap(stmt *ast.CreateIndexStatement, doc *designdoc) error {
 	line := strings.Replace(templKey, "$keylist", keylist.String(), -1)
 	fmt.Fprint(buf, line)
 	fmt.Fprint(buf, templEmit)
-	fmt.Fprint(buf, templEnd) 
+	fmt.Fprint(buf, templEnd)
 	doc.mapfn = buf.String()
-	
+
 	fmt.Println(doc.mapfn)
 	return nil
 }
@@ -109,18 +101,17 @@ func generateReduce(stmt *ast.CreateIndexStatement, doc *designdoc) error {
 	return nil
 }
 
-
 func (idx *ViewIndex) putDesignDoc() error {
 	bucket, err := getBucketForIndex(idx)
 	if err != nil {
 		return err
 	}
 
-	var view putView
+	var view couchbase.ViewDefinition
 	view.Map = idx.ddoc.mapfn
 
-	var put putRequest
-	put.Views = make(map[string]putView)
+	var put couchbase.DDocJSON
+	put.Views = make(map[string]couchbase.ViewDefinition)
 	put.Views[idx.ViewName()] = view
 
 	if err := bucket.PutDDoc(idx.DDocName(), &put); err != nil {
@@ -168,13 +159,13 @@ func (idx *ViewIndex) DropViewIndex() error {
 	if err != nil {
 		return err
 	}
-	
+
 	if err := bucket.DeleteDDoc(idx.DDocName()); err != nil {
 		return err
 	}
-	
+
 	fmt.Println("Dropped", idx.Name())
-	
+
 	return nil
 }
 

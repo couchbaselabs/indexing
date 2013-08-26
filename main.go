@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"time"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/engine"
 	"github.com/couchbaselabs/tuqtng/ast"
 	"github.com/couchbaselabs/tuqtng/parser/goyacc"
+	"time"
 )
 
 func main() {
@@ -29,10 +29,16 @@ func main() {
 		path := eng.Index(name)
 		fmt.Println(path.Name())
 	}
-	
+
 	time.Sleep(3 * time.Second)
-	
-	err = eng.Drop("tester")
+
+	unql = "DROP INDEX beer-sample.testexr"
+	stmt, err = parser.Parse(unql)
+	if err != nil {
+		panic(err)
+	}
+
+	err = eng.Drop(stmt.(*ast.DropIndexStatement))
 	if err != nil {
 		panic(err)
 	}

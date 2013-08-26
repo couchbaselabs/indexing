@@ -9,7 +9,7 @@ type Indexer interface {
 	Create(statement *ast.CreateIndexStatement) error
 
 	// Drop kills an instance of an index
-	Drop(name string) error
+	Drop(stmt *ast.DropIndexStatement) error
 
 	// Instances lists all known index instances
 	Indexes() []string

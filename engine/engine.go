@@ -38,24 +38,24 @@ func (this *engine) Create(stmt *ast.CreateIndexStatement) error {
 	}
 }
 
-func (this *engine) Drop(name string) error {
+func (this *engine) Drop(stmt *ast.DropIndexStatement) error {
 	defer this.save()
 
-	inst := this.indexes[name]
+	inst := this.indexes[stmt.Name]
 	if inst == nil {
 		return api.NoSuchIndex
 	}
-	
+
 	switch tinst := inst.(type) {
-		case *view.ViewIndex:
-			if err:= tinst.DropViewIndex(); err != nil {
-				return err
-			}
+	case *view.ViewIndex:
+		if err := tinst.DropViewIndex(); err != nil {
+			return err
+		}
 	}
-	
-	delete(this.indexes, name)
+
+	delete(this.indexes, stmt.Name)
 	return nil
-} 
+}
 
 func (eng *engine) Indexes() []string {
 	rv := make([]string, len(eng.indexes))
