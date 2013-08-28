@@ -1,2 +1,4 @@
 *.swp
 .vimsession
+indexing
+*.idat.*
