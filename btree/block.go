@@ -14,12 +14,12 @@ type block struct {
     // Following fields are loaded from disk.
     leaf byte       // Is this leaf block, 0-false, 1-true
     size uint64     // number of `kv` entries in this node.
-    ks []key        // slice of len() `size`.
+    ks []bkey       // slice of len() `size`.
     vs []int64      // slice of len() `size` + 1.
                     // file-offset in kv-file where value resides.
 }
 
-type key struct {
+type bkey struct {
     ctrl uint32     // control word.
     kpos int64      // file-offset in kv-file where key resides.
     dpos int64      // file-offset in kv-file where document-id (primary key).
@@ -30,7 +30,6 @@ func (b *block) isLeaf() bool {
 }
 
 func (b *block) load( store *Store, buf *bytes.Buffer ) *block {
-    var size uint64
     // Fetch number of entries in this block
     if err := binary.Read( buf, binary.LittleEndian, &b.leaf ); err != nil {
         panic( err.Error() )
@@ -43,7 +42,7 @@ func (b *block) load( store *Store, buf *bytes.Buffer ) *block {
     var ctrl uint32
     var kpos, dpos int64
     max := store.maxKeys()
-    b.ks = make([]key, 0, max+1)
+    b.ks = make([]bkey, 0, max+1)
     for i:=uint64(0); i<b.size; i++ {
         if err := binary.Read( buf, binary.LittleEndian, &ctrl ); err != nil {
             panic(err.Error())
@@ -54,7 +53,7 @@ func (b *block) load( store *Store, buf *bytes.Buffer ) *block {
         if err := binary.Read( buf, binary.LittleEndian, &dpos ); err != nil {
             panic(err.Error())
         }
-        b.ks = append(b.ks, key{ctrl:ctrl, kpos:kpos, dpos:dpos})
+        b.ks = append(b.ks, bkey{ctrl:ctrl, kpos:kpos, dpos:dpos})
     }
     // Fetch values in this block
     var vpos int64

@@ -71,8 +71,8 @@ func Create(conf Config) *Store {
     store.freelist.add( offsets[1:] ).flush()
 
     // Setup root node.
-    store.flushNode( &knode{}.newNode( store, offsets[0] ))
-    store.head.setRoot( offset[0] )
+    store.flushNode( (&knode{}).newNode( store, offsets[0] ))
+    store.head.setRoot( offsets[0] )
 
     // Launch go-routine to serialize append to KV store.
     store.kvStore.wfd.Seek(0, os.SEEK_END)
@@ -90,7 +90,7 @@ func (store *Store) Close() {
 }
 
 func (store *Store) Root() Node {
-    store.fetchNode( store.head.root )
+    return store.fetchNode( store.head.root )
 }
 
 func (store *Store) fetchNode(fpos int64) Node {
@@ -172,11 +172,11 @@ func (store *Store) appendBlocks( count int64 ) []int64 {
 }
 
 func (store *Store) maxKeys() uint64 {
-    max := (kn.store.blocksize-BLK_OVERHEAD) / (BLK_KEY_SIZE+BLK_VALUE_SIZE)
+    max := (store.blocksize-BLK_OVERHEAD) / (BLK_KEY_SIZE+BLK_VALUE_SIZE)
     if max % 2 == 0 {
-        return max
+        return uint64(max)
     } else {
-        return max-1
+        return uint64(max-1)
     }
 }
 
