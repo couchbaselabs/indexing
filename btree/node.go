@@ -81,8 +81,8 @@ type Node interface {
     getKnode() *knode
     copyOnWrite() Node
     merge(Node, bkey) Node
-    rotateLeft(Node, uint64, bkey) bkey
-    rotateRight(Node, uint64, bkey) bkey
+    rotateLeft(Node, int, bkey) bkey
+    rotateRight(Node, int, bkey) bkey
 }
 
 // Make this leaf-node a prestine copy of the disk version, this is case when
@@ -114,13 +114,13 @@ func (in *inode) getKnode() *knode {
 //  - whether or not it also matches the doc-id.
 // If there are no elements greater than or equal to `key` then it returns
 // (len(node.key), false, false)
-func (kn *knode) searchGE(key Key) (uint64, bool, bool) {
+func (kn *knode) searchGE(key Key) (int, bool, bool) {
     ks := kn.ks
     if kn.size == 0 {
         return 0, false, false
     }
 
-    low, high := uint64(0), kn.size
+    low, high := 0, kn.size
     for high-low > 8 {
         mid := (high+low) / 2
         if key.Less( kn.store.fetchKey( ks[mid].kpos )) {
@@ -146,24 +146,24 @@ func (kn *knode) newNode( store *Store, fpos int64 ) *knode {
     max := store.maxKeys()  // always even
     newks := make([]bkey, max/2, max+1)
     newvs := make([]int64, max/2+1, max+2)
-    b := block{ leaf:TRUE, size:uint64(len(kn.ks)), ks:newks, vs:newvs }
-    return &knode{ block:b, store:store, fpos:fpos, dirty:true,
-                   stalenodes:[]int64{} }
+    b := block{leaf: TRUE, size: len(kn.ks), ks: newks, vs: newvs}
+    return &knode{block: b, store: store, fpos: fpos, dirty: true,
+                  stalenodes: []int64{}}
 }
 
 func (in *inode) newNode( store *Store, fpos int64 ) *inode {
     max := store.maxKeys()  // always even
     newks := make([]bkey, max/2, max+1)
     newvs := make([]int64, max/2+1, max+2)
-    b := block{ leaf:FALSE, size:uint64(len(in.ks)), ks:newks, vs:newvs }
-    kn := knode{ block:b, store:store, fpos:fpos, dirty:true,
-                 stalenodes:[]int64{} }
+    b := block{leaf: FALSE, size: len(in.ks), ks: newks, vs: newvs}
+    kn := knode{block: b, store: store, fpos: fpos, dirty: true,
+                stalenodes: []int64{}}
     return &inode{ knode:kn }
 }
 
 //---- count
 func (kn *knode) count() uint64 {
-    return kn.size
+    return uint64(kn.size)
 }
 func (in *inode) count() uint64 {
     n := uint64(0)
@@ -228,7 +228,7 @@ func (kn *knode) insert(key Key, v Value) (Node, Node, bkey) {
     copy(kn.vs[index+1:], kn.vs[index:])  // Shift existing data out of the way
     kn.vs[index] = kn.valueOf(key)
 
-    kn.size = uint64(len(kn.ks))
+    kn.size = len(kn.ks)
     max := kn.store.maxKeys()
     if kn.size <= max {
         return kn, nil, bkey{}
@@ -258,7 +258,7 @@ func (in *inode) insert(key Key, v Value) (Node, Node, bkey) {
     copy(in.vs[index+2:], in.vs[index+1:])  // Shift existing data out of the way
     in.vs[index+1] = spawn.getKnode().fpos
 
-    in.size = uint64(len(in.ks))
+    in.size = len(in.ks)
     max := in.store.maxKeys()
     if in.size <= max {
         return in, nil, bkey{}
@@ -276,7 +276,7 @@ func (kn *knode) lookup(key Key, emit Emitter) {
         emit(nil)
     }
     emit( kn.store.fetchValue( kn.vs[index] ))
-    for i:=index+1; i<uint64(len(kn.ks)); i++ {
+    for i := index+1; i < len(kn.ks); i++ {
         keyb := kn.store.fetchKey( kn.ks[i].kpos )
         if keyeq, _ := key.Equal(keyb, nil); keyeq {
             emit( kn.store.fetchValue( kn.vs[i] ))
@@ -286,7 +286,7 @@ func (kn *knode) lookup(key Key, emit Emitter) {
 
 func (in *inode) lookup(key Key, emit Emitter) {
     index, _, _ := in.searchGE(key)
-    for i:=index; i<uint64(len(in.ks)); i++ {
+    for i := index; i < len(in.ks); i++ {
         in.store.fetchKey( in.ks[i].kpos )
         in.store.fetchNode( in.vs[i] ).lookup(key, emit)
     }
@@ -302,7 +302,7 @@ func (kn *knode) remove(key Key) (Node, bool, []byte) {
     kn = kn.copyOnWrite().(*knode)
     copy(kn.ks[index:], kn.ks[index+1:])
     kn.ks = kn.ks[0: len(kn.ks)-1]
-    kn.size = uint64(len(kn.ks))
+    kn.size = len(kn.ks)
 
     valb := kn.store.fetchValue( kn.vs[index] )
     if kn.size >= kn.store.rebalanceThrs {
@@ -338,7 +338,7 @@ func (in *inode) remove(key Key) (Node, bool, []byte) {
     return in, true, valb
 }
 
-func rebalanceLeft(in *inode, index uint64, child Node, left Node) {
+func rebalanceLeft(in *inode, index int, child Node, left Node) {
     count := balance(child, left)
     median :=  in.ks[index-1]
     if count == 0 {
@@ -349,13 +349,13 @@ func rebalanceLeft(in *inode, index uint64, child Node, left Node) {
         // Child has to go
         copy(in.vs[index:], in.vs[index+1:])
         in.vs = in.vs[0: len(in.ks)]
-        in.size = uint64(len(in.ks))
+        in.size = len(in.ks)
     } else {
         in.ks[index-1] = left.rotateRight(child, count, median)
     }
 }
 
-func rebalanceRight(in *inode, index uint64, child Node, right Node) {
+func rebalanceRight(in *inode, index int, child Node, right Node) {
     count := balance(child, right)
     median := in.ks[index]
     if count == 0 {
@@ -366,13 +366,13 @@ func rebalanceRight(in *inode, index uint64, child Node, right Node) {
         // Right has to go
         copy(in.vs[index+1:], in.vs[index+2:])
         in.vs = in.vs[0: len(in.ks)]
-        in.size = uint64(len(in.ks))
+        in.size = len(in.ks)
     } else {
         in.ks[index] = child.rotateLeft(right, count, median)
     }
 }
 
-func balance(to Node, node Node) uint64 {
+func balance(to Node, node Node) int {
     kn := node.getKnode()
     max := kn.store.maxKeys()
     size := kn.size + to.getKnode().size

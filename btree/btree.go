@@ -7,9 +7,9 @@ type Config struct {
     kvfile string
     sectorsize int64        // in bytes
     flistsize int64         // in bytes
-    blocksize int64         // in bytes
+    blocksize int           // in bytes
     minFreelist int         // Minimum threshold of free blocks
-    rebalanceThrs uint64
+    rebalanceThrs int
 }
 
 type BTree struct {
@@ -119,7 +119,7 @@ func (bt *BTree) Insert(k Key, v Value) bool {
     in := (&inode{}).newNode(bt.store, fpos)
     in.ks = []bkey{ median }
     in.vs = []int64{ root.getKnode().fpos, spawn.getKnode().fpos }
-    in.size = uint64( len(in.ks) )
+    in.size = len(in.ks)
     bt.root = in
     dirtyblocks[fpos] = in
     return true

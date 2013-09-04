@@ -1,65 +1,90 @@
+// translates btree blocks from persistant storage to in-memory data
+// structure, called btree-node. A btree node can be a knode (also called leaf
+// node) or it can be a inode. `block` structure is fundamental to both type
+// of nodes.
 package btree
-import "bytes"
-import "encoding/binary"
+
+import (
+    "bytes"
+    "encoding/binary"
+    "fmt"
+)
+
+var _ = fmt.Sprintf("keep 'fmt' import during debugging");
 
 const (
-    BLK_KEY_SIZE = 20   // bytes
-    BLK_VALUE_SIZE = 8  // bytes
-    BLK_OVERHEAD = 10   // bytes
+    // FIXME : Is there a better way to learn sizeof a struct.
+    BLK_KEY_SIZE = 20  // bytes
+    BLK_VALUE_SIZE = 8 // bytes
+    BLK_OVERHEAD = 16  // bytes, leaf+size field
     TRUE = 1
     FALSE= 0
 )
 
+// block structure. every field in this structure has a corresponding data
+// persisted as btree-block.
 type block struct {
-    // Following fields are loaded from disk.
-    leaf byte       // Is this leaf block, 0-false, 1-true
-    size uint64     // number of `kv` entries in this node.
-    ks []bkey       // slice of len() `size`.
-    vs []int64      // slice of len() `size` + 1.
-                    // file-offset in kv-file where value resides.
+    leaf byte   // Is this leaf block, 0-false, 1-true
+    size int    // number of `keys` in this node. `values` will be `keys`+1
+    ks []bkey   // slice of len() `size`.
+    vs []int64  // slice of len() `size` + 1.
+                // file-offset in kv-file where value resides.
 }
 
+// bkey structure. This strucutre is internal to btree algorithm, to learn more
+// about key structure passed from user code refer to `Key` interface.
 type bkey struct {
-    ctrl uint32     // control word.
-    kpos int64      // file-offset in kv-file where key resides.
-    dpos int64      // file-offset in kv-file where document-id (primary key).
+    ctrl uint32 // control word.
+    kpos int64  // file-offset in kv-file where key resides.
+    dpos int64  // file-offset in kv-file where document-id (primary key).
 }
 
+// Check whether `block` is a leaf block, which means `Node` is a `knode`
+// structure.
 func (b *block) isLeaf() bool {
-    return b.leaf == 1
+    return b.leaf == TRUE
 }
 
+// Convert btree block from persistant storage to `block` structure, which
+// then will be get embedded inside `knode` or `inode` structure.
 func (b *block) load( store *Store, buf *bytes.Buffer ) *block {
-    // Fetch number of entries in this block
-    if err := binary.Read( buf, binary.LittleEndian, &b.leaf ); err != nil {
+    // Read information whether this block is a leaf node or not.
+    if err := binary.Read(buf, binary.LittleEndian, &b.leaf); err != nil {
         panic( err.Error() )
     }
     // Fetch number of entries in this block
-    if err := binary.Read( buf, binary.LittleEndian, &b.size ); err != nil {
+    var size32 int32
+    if err := binary.Read(buf, binary.LittleEndian, &size32); err != nil {
         panic( err.Error() )
     }
-    // Fetch ikeys in this block
+    b.size = int(size32)
+
+    // Load keys in this block
     var ctrl uint32
     var kpos, dpos int64
     max := store.maxKeys()
+    // Make additional room, `max+1`, to detect node overflow.
     b.ks = make([]bkey, 0, max+1)
-    for i:=uint64(0); i<b.size; i++ {
-        if err := binary.Read( buf, binary.LittleEndian, &ctrl ); err != nil {
+    for i := 0; i < b.size; i++ {
+        if err := binary.Read(buf, binary.LittleEndian, &ctrl); err != nil {
             panic(err.Error())
         }
-        if err := binary.Read( buf, binary.LittleEndian, &kpos ); err != nil {
+        if err := binary.Read(buf, binary.LittleEndian, &kpos); err != nil {
             panic(err.Error())
         }
-        if err := binary.Read( buf, binary.LittleEndian, &dpos ); err != nil {
+        if err := binary.Read(buf, binary.LittleEndian, &dpos); err != nil {
             panic(err.Error())
         }
         b.ks = append(b.ks, bkey{ctrl:ctrl, kpos:kpos, dpos:dpos})
     }
-    // Fetch values in this block
+
+    // Load values in this block
     var vpos int64
+    // in b+tree nodes, values are one more than the keys. Additional room,
+    // `max+2`, is made to detect node overflow.
     b.vs = make([]int64, 0, max+2)
-    for i:=uint64(0); i<b.size+1 ; i++ {
-        if err := binary.Read( buf, binary.LittleEndian, &vpos ); err != nil {
+    for i := 0; i < (b.size+1); i++ {
+        if err := binary.Read(buf, binary.LittleEndian, &vpos); err != nil {
             panic(err.Error())
         }
         b.vs = append(b.vs, vpos)
@@ -67,31 +92,39 @@ func (b *block) load( store *Store, buf *bytes.Buffer ) *block {
     return b
 }
 
-func (b *block) dump( store *Store, buf *bytes.Buffer ) *block {
-    if err := binary.Write( buf, binary.LittleEndian, &b.leaf ); err != nil {
-        panic( err.Error() )
+// Convert btree node structure, which can be either knode or inode structure,
+// to byte-buffer that can be persisted as btree-block
+func (b *block) dump(store *Store, buf *bytes.Buffer) *block {
+    // persist whether this node is leaf node or not.
+    if err := binary.Write(buf, binary.LittleEndian, &b.leaf); err != nil {
+        panic(err.Error())
     }
-    if err := binary.Write( buf, binary.LittleEndian, &b.size ); err != nil {
-        panic( err.Error() )
+    // persist the number of keys in this node.
+    size32 := int32(b.size)
+    if err := binary.Write(buf, binary.LittleEndian, &size32); err != nil {
+        panic(err.Error())
     }
-    for i:=uint64(0); i<b.size; i++ {
+
+    // Dump keys
+    for i := 0; i < b.size; i++ {
         k := b.ks[i]
         if err := binary.Write(buf, binary.LittleEndian, &k.ctrl); err != nil {
             panic(err.Error())
         }
-        if err := binary.Read(buf, binary.LittleEndian, &k.kpos); err != nil {
+        if err := binary.Write(buf, binary.LittleEndian, &k.kpos); err != nil {
             panic(err.Error())
         }
-        if err := binary.Read(buf, binary.LittleEndian, &k.dpos); err != nil {
+        if err := binary.Write(buf, binary.LittleEndian, &k.dpos); err != nil {
             panic(err.Error())
         }
     }
-    for i:=uint64(0); i<b.size+1; i++ {
+
+    // Dump values
+    for i := 0; i < (b.size+1); i++ {
         v := b.vs[i]
-        if err := binary.Read(buf, binary.LittleEndian, &v); err != nil {
+        if err := binary.Write(buf, binary.LittleEndian, &v); err != nil {
             panic(err.Error())
         }
     }
     return b
 }
-
