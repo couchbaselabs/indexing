@@ -1,196 +1,62 @@
 package btree
 
-//---- btree wide globals
-var dirtyblocks = make(map[int64]Node)
+import (
+    "fmt"
+)
 
+var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+
+// Create a new copy of node by assigning a free file-position to it. Also add
+// the node into the commit queue.
 func (kn *knode) copyOnWrite() Node {
-    if kn.dirty == true {
-        return kn
+    newkn := *kn
+    if newkn.dirty == false {
+        newkn.fpos = newkn.store.wstore.popFreelist()
     }
-    kn.fpos, kn.stalefpos = kn.store.freelist.pop(), kn.fpos
-    kn.dirty = true
-    if dirtyblocks[kn.fpos] != nil {
-        panic("A freeblock is found in cow cache")
-    }
-    dirtyblocks[kn.fpos] = kn
-    return kn
+    newkn.dirty = true
+    newkn.store.wstore.commit(&newkn)
+    return &newkn
 }
 
+// Refer above.
 func (in *inode) copyOnWrite() Node {
-    in.knode.copyOnWrite()
-    dirtyblocks[in.fpos] = in
-    return in
-}
-
-func (kn *knode) split() (Node, Interface) {
-    // Get a free block
-    fpos := kn.store.freelist.pop()
-    max := kn.store.maxKeys()  // always even
-
-    newkn := (&knode{}).newNode( kn.store, fpos )
-
-    copy(newkn.ks[0:], kn.ks[max/2+1:])
-    kn.ks = kn.ks[0:max/2+1]
-    kn.size = len(kn.ks)
-
-    copy(newkn.vs[0:], kn.vs[max/2+1:])
-    kn.vs = append( kn.vs[0:max/2+1], 0 )
-
-    dirtyblocks[fpos] = newkn
-    return newkn, newkn.ks[0]
-}
-
-func (in *inode) split() (Node, Interface) {
-    // Get a free block
-    fpos := in.store.freelist.pop()
-    max := in.store.maxKeys()  // always even
-
-    newin := (&inode{}).newNode( in.store, fpos )
-
-    copy(newin.ks[0:], in.ks[max/2+1:])
-    median := in.ks[max/2]
-    in.ks = in.ks[0:max/2]
-    in.size = len(in.ks)
-
-    copy(newin.vs[0:], in.vs[max/2+1:])
-    in.vs = in.vs[0:max/2+1]
-
-    dirtyblocks[fpos] = newin
-    return newin, median
-}
-
-func (kn *knode) merge(other_ Node, median bkey) Node {
-    other := other_.(*knode)
-    max := kn.store.maxKeys()
-    if kn.size + other.size >= max {
-        panic("We cannot merge knodes now. Combined size is greater")
+    newin := *in
+    if newin.dirty == false {
+        newin.fpos = newin.store.wstore.popFreelist()
     }
-    kn.ks = kn.ks[0:kn.size+other.size]
-    copy(kn.ks[kn.size:], other.ks)
-
-    kn.vs = kn.vs[0:kn.size+other.size+1]
-    copy(kn.vs[kn.size:], other.vs)
-
-    kn.stalenodes = []int64{other.fpos}
-    return kn
+    newin.dirty = true
+    newin.store.wstore.commit(&newin)
+    return &newin
 }
 
-func (kn *knode) rotateRight(child_ Node, count int, median bkey) bkey {
-    child := child_.(*knode)
-    chlen := len(child.ks)
-    knlen := len(kn.ks)
-    // Move last `count` keys from kn -> child.
-    child.ks = child.ks[:chlen+count]   // First expand
-    copy( child.ks[count:], child.ks[0:chlen] )
-    copy( child.ks[:count], kn.ks[knlen-count:] )
-    // Blindly shrink kn keys
-    kn.ks = kn.ks[:knlen-count]
-    // Update size.
-    kn.size, child.size = len(kn.ks), len(child.ks)
-    // Move last count values from kn -> child
-    child.vs = child.vs[:chlen+count+1] // First expand
-    copy( child.vs[count:], child.vs[0:chlen+1] )
-    copy( child.vs[:count], kn.vs[knlen-count+1:] )
-    // Blinldy shrink kn values and then append it with null pointer
-    kn.vs = append( kn.vs[:knlen-count+1], 0 )
-    // Return the median
-    return child.ks[0]
+// Create a new instance of `knode`, an in-memory representation of btree leaf
+// block.
+//   * keys slice must be half sized and zero valued, capacity of keys slice
+//     must be 1 larger to accomodate slice-detection.
+//   * values slice must be half+1 sized and zero valued, capacity of values
+//     slice must be 1 larger to accomodate slice-detection.
+func (kn *knode) newNode(store *Store) *knode {
+    fpos := store.wstore.popFreelist()
+
+    max := store.maxKeys() // always even
+    newks := make([]bkey, max/2, max+1)
+    newvs := make([]int64, max/2+1, max+2)
+    b := block{leaf: TRUE, size: 0, ks: newks, vs: newvs}
+    newkn := &knode{block: b, store: store, fpos: fpos, dirty: true}
+    store.wstore.commit(newkn)
+    return newkn
 }
 
-func (child *knode) rotateLeft(kn_ Node, count int, median bkey) bkey {
-    kn := kn_.(*knode)
-    chlen := len(child.ks)
-    // Move first `count` keys from kn -> child.
-    child.ks = child.ks[:chlen+count]  // First expand
-    copy( child.ks[chlen:], kn.ks[0:count] )
-    // Blindly shrink kn keys
-    kn.ks = kn.ks[count:]
-    // Update size.
-    kn.size, child.size = len(kn.ks), len(child.ks)
-    // Move last count values from kn -> child
-    child.vs = child.vs[:chlen+count]    // First expand
-    copy( child.vs[chlen:], kn.vs[0:count] )
-    child.vs = append(child.vs, 0)
-    // Blinldy shrink kn values and then append it with null pointer
-    kn.vs = kn.vs[count:]
-    // Return the median
-    return kn.ks[0]
+// Refer to the notes above.
+func (in *inode) newNode(store *Store) *inode {
+    fpos := store.wstore.popFreelist()
+
+    max := store.maxKeys() // always even
+    newks := make([]bkey, max/2, max+1)
+    newvs := make([]int64, max/2+1, max+2)
+    b := block{leaf: FALSE, size: 0, ks: newks, vs: newvs}
+    kn := knode{block: b, store: store, fpos: fpos, dirty:true}
+    newin := &inode{knode: kn}
+    store.wstore.commit(newin)
+    return newin
 }
-
-func (in *inode) merge(other_ Node, median bkey) Node {
-    other := other_.(*inode)
-    max := in.store.maxKeys()
-    if (in.size + other.size + 1) >= max {
-        panic("We cannot merge inodes now. Combined size is greater")
-    }
-    in.ks = in.ks[0:in.size+other.size+1]
-    in.ks[in.size] = median
-    copy(in.ks[in.size+1:], other.ks)
-
-    in.vs = in.vs[0:in.size+other.size+2]
-    copy(in.vs[in.size+1:], other.vs)
-    in.stalenodes = []int64{other.fpos}
-    return in
-}
-
-func (in *inode) rotateRight(child_ Node, count int, median bkey) bkey {
-    child := child_.(*inode)
-    in.ks = append(in.ks, median)
-    chlen := len(child.ks)
-    inlen := len(in.ks)
-    // Move last `count` keys from in -> child.
-    child.ks = child.ks[:chlen+count]   // First expand
-    copy( child.ks[count:], child.ks[0:chlen] )
-    copy( child.ks[:count], in.ks[inlen-count:] )
-    // Blindly shrink in keys
-    in.ks = in.ks[:inlen-count]
-    // Update size.
-    in.size, child.size = len(in.ks), len(child.ks)
-    // Move last count values from in -> child
-    child.vs = child.vs[:chlen+count+1] // First expand
-    copy( child.vs[count:], child.vs[0:chlen+1] )
-    copy( child.vs[:count], in.vs[inlen-count+1:] )
-    // Pop out median
-    median = in.ks[in.size-1]
-    in.ks = in.ks[:in.size-1]
-    in.size = len(in.ks)
-    // Return the median
-    return median
-}
-
-func (child *inode) rotateLeft(in_ Node, count int, median bkey) bkey {
-    in := in_.(*knode)
-    child.ks = append(child.ks, median)
-    chlen := len(child.ks)
-    // Move first `count` keys from in -> child.
-    child.ks = child.ks[:chlen+count]  // First expand
-    copy( child.ks[chlen:], in.ks[0:count] )
-    // Blindly shrink in keys
-    in.ks = in.ks[count:]
-    // Update size.
-    in.size, child.size = len(in.ks), len(child.ks)
-    // Move last count values from in -> child
-    child.vs = child.vs[:chlen+count]    // First expand
-    copy( child.vs[chlen:], in.vs[0:count] )
-    // Blinldy shrink in values and then append it with null pointer
-    in.vs = in.vs[count:]
-    // Pop out median
-    median = child.ks[child.size-1]
-    child.ks = child.ks[:child.size-1]
-    child.size = len(child.ks)
-    // Return the median
-    return median
-}
-
-func (kn *knode) keyOf(k Key) bkey {
-    return bkey{
-        ctrl: k.Control(),
-        kpos: kn.store.appendKey( k.Bytes() ),
-        dpos: kn.store.appendDocid( k.Docid() ),
-    }
-}
-
-func (kn *knode) valueOf(v Value) int64 {
-    return kn.store.appendValue( v.Bytes() )
-}
-

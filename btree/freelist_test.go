@@ -8,29 +8,28 @@ import (
 var _ = fmt.Sprintf("keep 'fmt' import during debugging");
 
 func Test_maxFreeBlock(t *testing .T) {
-    store := testStore()
+    store := testStore(true)
     defer func() {
         store.Destroy()
     }()
 
-    if ((maxFreeBlocks(store)+1)*8) != FLIST_SIZE {
+    wstore := store.wstore
+    if (wstore.maxFreeBlocks()*8) != int(store.Flistsize) {
         t.Fail()
     }
 }
 
-func Test_fetch(t *testing.T) {
-    store := testStore()
+func Test_fetchFreelist(t *testing.T) {
+    store := testStore(true)
     defer func() {
         store.Destroy()
     }()
 
-    freelist := store.freelist
-    if freelist.dirty == true {
-        t.Fail()
-    }
-    if (freelist.offsets[0] != store.fpos_firstblock+BLOCK_SIZE) ||
-       (freelist.offsets[1] != store.fpos_firstblock+(2*BLOCK_SIZE)) ||
-       (freelist.offsets[1022] != 0) {
+    wstore := store.wstore
+    freelist := wstore.freelist
+    firstfpos := wstore.fpos_firstblock
+    if (freelist.offsets[0] != firstfpos+int64(wstore.Blocksize)) ||
+       (freelist.offsets[1] != firstfpos+(2*int64(wstore.Blocksize))) {
         t.Fail()
     }
 }

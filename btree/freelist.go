@@ -4,6 +4,8 @@ package btree
 import (
     "encoding/binary"
     "fmt"
+    "bytes"
+    "hash/crc32"
     "os"
 )
 
@@ -11,73 +13,75 @@ var _ = fmt.Sprintf("keep 'fmt' import during debugging");
 
 // Structure to manage the free list
 type FreeList struct {
-    store *Store
-    dirty bool              // Tells whether `freelist` contain side-effects
-    fpos_block1 int64       // file-offset into index file where 1st-list is
-    fpos_block2 int64       // file-offset into index file where 2nd-list is
-    offsets []int64         // array(slice) of free blocks
+    wstore *WStore
+    dirty bool        // Tells whether `freelist` contain side-effects
+    fpos_block1 int64 // file-offset into index file where 1st-list is
+    fpos_block2 int64 // file-offset into index file where 2nd-list is
+    offsets []int64   // array(slice) of free blocks
 }
 
+var crctab = crc32.MakeTable(crc32.IEEE)
+
 // Create a new FreeList structure
-func newFreeList(store *Store) *FreeList {
-    sl := FreeList {
-        store: store,
+func newFreeList(wstore *WStore) *FreeList {
+    fl := FreeList {
+        wstore: wstore,
         dirty: false,
-        fpos_block1: store.sectorsize*2,
-        fpos_block2: store.sectorsize*2 + store.flistsize,
-        offsets: make([]int64, 1, maxFreeBlocks(store)+1),  // lastblock is zero
+        fpos_block1: wstore.Sectorsize*2,
+        fpos_block2: wstore.Sectorsize*2 + wstore.Flistsize,
+        offsets: make([]int64, 1, wstore.maxFreeBlocks()),  // lastblock is zero
     }
-    return &sl
+    return &fl
 }
 
 // Fetch list of free blocks from index file. 
-func (fl *FreeList) fetch() *FreeList {
+func (fl *FreeList) fetch(crc uint32) bool {
     var fpos int64
     if fl.dirty {
         panic("Cannot read index head when in-memory copy is dirty")
     }
 
-    rfd := fl.store.idxStore.rfd
+    // Open the index file in read mode.
+    wstore := fl.wstore
+    rfd, _ := os.Open(wstore.Idxfile)
 
-    // Read the first copy
-    rfd.Seek(fl.fpos_block1, os.SEEK_SET)
-    fl.offsets = fl.offsets[0:0]
-    for i := 0; i < maxFreeBlocks(fl.store); i++ {
-        if err := binary.Read(rfd, binary.LittleEndian, &fpos); err != nil {
-            panic(err.Error())
-        }
+    // Read the first block
+    bytebuf := make([]byte, wstore.Flistsize)
+    if _, err := rfd.ReadAt(bytebuf, fl.fpos_block1); err != nil {
+        panic(err.Error())
+    }
+    // Load the offsets
+    fl.offsets = fl.offsets[:0]
+    buf := bytes.NewBuffer(bytebuf)
+    for i := 0; i < wstore.maxFreeBlocks(); i++ {
+        binary.Read(buf, binary.LittleEndian, &fpos)
+        fl.offsets = append(fl.offsets, int64(fpos)) // include zero-terminator
         if fpos == 0 {
             break
         }
-        fl.offsets = append(fl.offsets, int64(fpos))
     }
-    fl.offsets = append(fl.offsets, 0) // zero terminator for the list
 
-    // Read the second copy
-    rfd.Seek(fl.fpos_block2, os.SEEK_SET)
-    for i := 0; i < maxFreeBlocks(fl.store); i++ {
-        if err := binary.Read(rfd, binary.LittleEndian, &fpos); err != nil {
-            panic(err.Error())
-        }
-        if fpos != 0 && fl.offsets[i] != fpos {
-            panic("Mismatch in freeblock list")
-        } else if fpos == 0 {
-            break
-        }
+    // verify the crc.
+    crc1 := crc32.Checksum(bytebuf, crctab)
+    if crc != crc1 {
+        return false
     }
-    return fl
+
+    // Verify with the second block
+    bytebuf_ := make([]byte, wstore.Flistsize)
+    if _, err := rfd.ReadAt(bytebuf_, fl.fpos_block2); err != nil {
+        panic(err.Error())
+    }
+    return bytes.Equal(bytebuf, bytebuf_)
 }
 
 // Add a list of offsets to free blocks. By adding `offsets` into the
 // freelist, length of freelist must not exceed `maxFreeBlocks()+1`.
-// Typically add() is called after a call to appendBlocks().
 func (fl *FreeList) add(offsets []int64) *FreeList {
-    ln := len(fl.offsets)-1
-    if (ln + len(offsets)) <= maxFreeBlocks(fl.store) {
-        fl.offsets = fl.offsets[:ln+len(offsets)]
-        // `ln-1` adjusts for zero-terminator
-        copy(fl.offsets[ln:], offsets)
-        fl.offsets = append(fl.offsets, 0) // zero terminator for the list
+    ln := len(fl.offsets)
+    if (ln + len(offsets)) <= fl.wstore.maxFreeBlocks() {
+        fl.offsets = append(fl.offsets[:ln-1], offsets...)
+        fl.offsets = append(fl.offsets, 0) // Zero terminator
         fl.dirty = true
     } else {
         panic("Cannot add more than maxFreeBlocks()")
@@ -87,46 +91,45 @@ func (fl *FreeList) add(offsets []int64) *FreeList {
 
 // Get a freeblock
 func (fl *FreeList) pop() int64 {
-    fpos := fl.offsets[0]
-    if fpos == 0 {
-        panic("freelist empty")
+    if fl.offsets[0] == 0 {
+        panic("Freelist is not expected to go empty")
     }
+    fpos := fl.offsets[0]
     fl.offsets = fl.offsets[1:]
+    fl.wstore.popCounts += 1 // stats
     return fpos
 }
 
-func (fl *FreeList) flush() *FreeList {
-    if fl.dirty == false {
-        return fl
+func (fl *FreeList) flush() uint32 {
+    buf := bytes.NewBuffer([]byte{})
+    // Zero fill offsets
+    count := fl.wstore.maxFreeBlocks() - len(fl.offsets)
+    offsets := append(fl.offsets, make([]int64, count)...)
+    // Dump offsets
+    for _, fpos := range offsets {
+        binary.Write(buf, binary.LittleEndian, &fpos)
     }
+    bytebuf := buf.Bytes()
+    // Write into the second copy
+    wfd := fl.wstore.idxWfd
+    wfd.WriteAt(bytebuf, fl.fpos_block2) // Write the second copy
+    wfd.WriteAt(bytebuf, fl.fpos_block1) // Write the first copy
 
-    block := make([]byte, FLIST_SIZE)
-    wfd := fl.store.idxStore.wfd
-    rfd := fl.store.idxStore.rfd
-
-    // Write the second copy
-    wfd.Seek(fl.fpos_block2, os.SEEK_SET)
-    for _, fpos := range fl.offsets {
-        if err := binary.Write(wfd, binary.LittleEndian, &fpos); err != nil {
-            panic(err.Error())
-        }
-    }
-    // Write the first copy
-    if _, err := rfd.ReadAt(block, fl.fpos_block2); err != nil {
-        panic(err.Error())
-    }
-    if _, err := wfd.WriteAt(block, fl.fpos_block1); err != nil {
-        panic(err.Error())
-    }
+    fl.wstore.flushFreelists += 1
     fl.dirty = false
-    return fl
+
+    crc := crc32.Checksum(bytebuf, crctab)
+    return crc
 }
 
-// Get the maximum number of free blocks that can be monitored by the
-// index-file. Returned value is actual value - 1 because the last entry is
-// null terminated and used to detect the end of free-list.
-func maxFreeBlocks(store *Store) int {
-    count := store.flistsize / OFFSET_SIZE
-    count -= 1 // Last reference will always be zero.
-    return int(count)
+func (fl *FreeList) isCritical() bool {
+    return len(fl.offsets) < (2*fl.wstore.Maxlevel)
+}
+
+func (fl *FreeList) limit() int {
+    limit := int(float32(fl.wstore.maxFreeBlocks()) * fl.wstore.AppendRatio)
+    if limit < 100 {
+        limit = fl.wstore.maxFreeBlocks()
+    }
+    return limit
 }

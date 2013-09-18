@@ -1,5 +1,10 @@
 package btree
 
+import (
+    "fmt"
+)
+
+// in-memory structure for leaf-block.
 type knode struct { // keynode
     block   // embedded structure 
 
@@ -7,113 +12,110 @@ type knode struct { // keynode
     store *Store    // reference to Index data-structure
     fpos int64      // file-offset where this block resides
 
-    // Fields are applicable when node is mapped under `dirtyblocks`
-    dirty bool          // if dirty, `stalefpos` and `stalenodes` becomes valid.
-    stalefpos int64     // fpos of old block
-    stalenodes []int64  // Child nodes that went stale due to rebalancing.
+    // Dirty or not
+    dirty bool
 }
 
+// in-memory structure for intermediate block.
 type inode struct { // intermediate node
     knode
     dirtychild uint64   // number of dirty children under this node.
 }
 
+// Node interface that is implemented by both `knode` and `inode` structure.
 type Node interface {
+    // Inserts the value into the appropriate place in the tree, rebalancing
+    // as necessary.  The first return value specifies if the value was
+    // actually added (i.e. if it wasn't already there).  If a new node is 
+    // created it is returned along with a separator value.
+    insert(Key, Value) (Node, Node, bkey, []Node)
+
     // Return number of entries on all the leaf nodes from this Node.
-    count() uint64
+    count() int64
 
     // Return value corresponding to lowest key in the tree.
-    front() []byte
+    front() (uint32, []byte, []byte, []byte)
 
-    // Returns true iff this tree contains the value.
+    // Returns true iff this tree contains the `key`.
     contains(Key) bool
+
+    // Returns true iff this tree contains the `key` with specified `docid`
+    equals(Key) bool
 
     // Passes all of the data in this node and its children through the cannel
     // in proper order.
     traverse(func(bkey, int64))
 
-    // Inserts the value into the appropriate place in the tree, rebalancing
-    // as necessary.  The first return value specifies if the value was
-    // actually added (i.e. if it wasn't already there).  If a new node is 
-    // created it is returned along with a separator value.
-    insert(Key, Value) (Node, Node, bkey)
-
     // lookup index for key
     lookup(Key, Emitter)
 
     // Removes the value from the tree, rebalancing as necessary. Returns true
-    // iff an element was actually deleted.
-    remove(Key) (Node, bool, []byte)
+    // iff an element was actually deleted. Return,
+    //  - Node
+    //  - whether to rebalance or not.
+    //  - slice of stalenodes
+    remove(Key) (Node, bool, []Node)
 
-    // Convenient development methods
+    //---- Support methods.
+    isLeaf() bool // Return whether node is a leaf node or not.
+    getKnode() *knode // Return the underlying `knode` structure.
+    getBlock() *block // Return the underlying `block` structure.
+    copyOnWrite() Node // copy node for modification.
 
-    //show(int)             // Textual display of a tree
-    //fsck(int, Less) bool  // Does a quick sanity check to make sure the tree is in order.
+    // FIXME: Node is both *knode and *inode.
+    // split() (Node, interface{}) // split node, happens during insert.
+    // newNode(*Store) *inode // create a new node, happens during insert.
 
-    // Grabs all of the data in bNode and merges it into this node.  Performs no checks while doing
-    // so.
+    balance(Node) int // count to rotate
+    mergeRight(Node, bkey) (Node, []Node) // merge receiver to Node.
+    mergeLeft(Node, bkey) (Node, []Node) // merge Node to receiver
+    rotateRight(Node, int, bkey) bkey // rotate entries from receiver to Node.
+    rotateLeft(Node, int, bkey) bkey // rotate entries from Node to receiver.
 
-    //merge(bNode)
-
-    // Like merge, but additionally adds an additional separator between the keys in the two nodes.
-
-    //mergeWithSeparator(bNode,T)
-
-    // We frequently need to ask about the number of keys in the node, and even though all nodes
-    // contain keyNode, we still can't access that without either a type check or exposing this
-    // method.
-
-    //lenKeys() int
-
-    // This is a method that provides a flexible way of traversing and deleting and element from the
-    // tree.  The function returns two elements (traverse, delete), which indicate the index of which
-    // element should be traversed or deleted.  A value of -1 is ignored, and at least one of them
-    // will always be -1.  This allows us to traverse and delete a specific value from the tree, as
-    // well as deleting the upper or lower bound of a value.
-
-    //traverseAndDelete(visitor) (bool, T)
-
-    // The following methods are used in conjunction with traverseAndDelete
-
-    //deleteMin() (int,int)
-    //deleteMax() (int,int)
-    //deleteTarget(T, Less) (int,int)
-    getKnode() *knode
-    copyOnWrite() Node
-    merge(Node, bkey) Node
-    rotateLeft(Node, int, bkey) bkey
-    rotateRight(Node, int, bkey) bkey
+    //---- Development methods.
+    listOffsets() []int64 // Return the list of offsets from sub-tree.
+    show(int) // Render this block on stdout and recursively call child blocks
+    showKeys(int) // Render keys at each level
+    // Count cummulative entries at each level
+    levelCount(int, []int64, int64, int64) ([]int64, int64, int64)
 }
 
-// Make this leaf-node a prestine copy of the disk version, this is case when
-// the node was just fetched from disk or when it was just flushed to disk.
-func (kn *knode) prestine() Node {
-    kn.dirty = false
-    return kn
-}
-
+// get `block` structure embedded in knode, TODO: This must go into Node 
+// interface !.
 func (kn *knode) getBlock() *block {
     return &kn.block
 }
-
-func (kn *knode) getKnode() *knode {
-    return kn
-}
-
+// get `block` structure embedded in inode's knode.
 func (in *inode) getBlock() *block {
     return &in.knode.block
 }
 
+// get `knode` structure, TODO: This must go into Node interface !
+func (kn *knode) getKnode() *knode {
+    return kn
+}
+// get `block` structure embedded in inode.
 func (in *inode) getKnode() *knode {
     return &in.knode
+}
+
+func (kn *knode) listOffsets() []int64 {
+    return []int64{kn.fpos}
+}
+
+func (in *inode) listOffsets() []int64 {
+    ls := make([]int64, 0)
+    for _, fpos := range in.vs {
+        ls = append(ls, in.store.FetchNode(fpos).listOffsets()...)
+    }
+    return append(ls, in.fpos)
 }
 
 // Returns,
 //  - index of the smallest value that is not less than `key`
 //  - whether or not it equals `key`
-//  - whether or not it also matches the doc-id.
 // If there are no elements greater than or equal to `key` then it returns
-// (len(node.key), false, false)
+// (len(node.key), false)
 func (kn *knode) searchGE(key Key) (int, bool, bool) {
     ks := kn.ks
     if kn.size == 0 {
@@ -121,264 +123,224 @@ func (kn *knode) searchGE(key Key) (int, bool, bool) {
     }
 
     low, high := 0, kn.size
-    for high-low > 8 {
+    for (high-low) > 1 {
         mid := (high+low) / 2
-        if key.Less( kn.store.fetchKey( ks[mid].kpos )) {
+        keyb := kn.store.fetchKey(ks[mid].kpos)
+        docb := kn.store.fetchKey(ks[mid].dpos)
+        if key.Less(keyb, docb) {
             high = mid
         } else {
             low = mid
         }
     }
 
-    for i := low; i < high; i++ {
-        keyb := kn.store.fetchKey( ks[i].kpos )
-        docb := kn.store.fetchDocid( ks[i].dpos )
-        if key.Less(keyb) == false {
-            keyeq, doceq := key.Equal(keyb, docb)
-            return i, keyeq, doceq
-        }
+    keyb := kn.store.fetchKey(ks[low].kpos)
+    docb := kn.store.fetchKey(ks[low].dpos)
+    if key.LessEq(keyb, docb) {
+        keyeq, doceq := key.Equal(keyb, docb)
+        return low, keyeq, doceq
     }
-
     return high, false, false
 }
 
-func (kn *knode) newNode( store *Store, fpos int64 ) *knode {
-    max := store.maxKeys()  // always even
-    newks := make([]bkey, max/2, max+1)
-    newvs := make([]int64, max/2+1, max+2)
-    b := block{leaf: TRUE, size: len(kn.ks), ks: newks, vs: newvs}
-    return &knode{block: b, store: store, fpos: fpos, dirty: true,
-                  stalenodes: []int64{}}
-}
+// Returns,
+//  - index of the smallest value that is equal to `key`.
+//  - whether or not it equals `key` and doc-id
+// If there are no elements that matches `key`, returns (0, false)
+func (kn *knode) searchEqual(key Key) (int, bool) {
+    ks := kn.ks
+    if kn.size == 0 {
+        return 0, false
+    }
 
-func (in *inode) newNode( store *Store, fpos int64 ) *inode {
-    max := store.maxKeys()  // always even
-    newks := make([]bkey, max/2, max+1)
-    newvs := make([]int64, max/2+1, max+2)
-    b := block{leaf: FALSE, size: len(in.ks), ks: newks, vs: newvs}
-    kn := knode{block: b, store: store, fpos: fpos, dirty: true,
-                stalenodes: []int64{}}
-    return &inode{ knode:kn }
+    low, high, max := 0, kn.size-1, kn.size
+    for high-low > 1 {
+        mid := (high+low) / 2
+        keyb := kn.store.fetchKey(ks[mid].kpos)
+        docb := kn.store.fetchKey(ks[mid].dpos)
+        if key.Less(keyb, docb) {
+            high = mid
+        } else {
+            low = mid
+        }
+    }
+
+    for i := low; i <= high; i++ {
+        keyb := kn.store.fetchKey(ks[i].kpos)
+        docb := kn.store.fetchDocid(ks[i].dpos)
+        if keyeq, doceq := key.Equal(keyb, docb); keyeq && doceq {
+            return i, true
+        }
+    }
+    return max, false
 }
 
 //---- count
-func (kn *knode) count() uint64 {
-    return uint64(kn.size)
+func (kn *knode) count() int64 {
+    return int64(kn.size)
 }
-func (in *inode) count() uint64 {
-    n := uint64(0)
+
+func (in *inode) count() int64 {
+    n := int64(0)
     for _, v := range in.vs {
-        n += in.store.fetchNode(v).count()
+        n += in.store.FetchNode(v).count()
     }
     return n
 }
 
 //---- front
-func (kn *knode) front() []byte {
+func (kn *knode) front() (uint32, []byte, []byte, []byte) {
     if kn.size == 0 {
-        return nil
+        return 0, nil, nil, nil
     } else {
-        return kn.store.fetchValue( kn.vs[0] )
+        return kn.ks[0].ctrl,
+               kn.store.fetchValue(kn.ks[0].kpos),
+               kn.store.fetchValue(kn.ks[0].dpos),
+               kn.store.fetchValue(kn.vs[0])
     }
 }
-func (in *inode) front() []byte {
-    return in.store.fetchNode( in.vs[0] ).front()
+
+func (in *inode) front() (uint32, []byte, []byte, []byte) {
+    return in.store.FetchNode(in.vs[0]).front()
 }
 
 //---- contains
 func (kn *knode) contains(key Key) bool {
-    _, keyexists, _ := kn.searchGE(key)
-    return keyexists
+    _, keyeq, _ := kn.searchGE(key)
+    return keyeq
 }
 
 func (in *inode) contains(key Key) bool {
-    idx, keyexists, _ := in.searchGE(key)
-    if keyexists {
+    idx, keyeq, _ := in.searchGE(key)
+    if keyeq {
         return true
     }
-    return in.store.fetchNode( in.vs[idx] ).contains(key)
+    return in.store.FetchNode(in.vs[idx]).contains(key)
+}
+
+//---- equals
+func (kn *knode) equals(key Key) bool {
+    _, keyeq, doceq := kn.searchGE(key)
+    return keyeq && doceq
+}
+
+func (in *inode) equals(key Key) bool {
+    idx, keyeq, doceq := in.searchGE(key)
+    if keyeq && doceq {
+        return true
+    }
+    return in.store.FetchNode(in.vs[idx]).equals(key)
 }
 
 //-- traverse
 func (kn *knode) traverse(fun func(bkey, int64)) {
     for i := range kn.ks {
-        fun( kn.ks[i], kn.vs[i] )
+        fun(kn.ks[i], kn.vs[i])
     }
 }
 
 func (in *inode) traverse(fun func(bkey, int64)) {
     for _, v := range in.vs {
-        in.store.fetchNode( v ).traverse( fun )
+        in.store.FetchNode(v).traverse(fun)
     }
-}
-
-//---- insert
-func (kn *knode) insert(key Key, v Value) (Node, Node, bkey) {
-    index, _, exists := kn.searchGE(key)
-    if exists {
-        panic("We expect a delete before insert\n")
-    }
-
-    kn = kn.copyOnWrite().(*knode)
-    kn.ks = kn.ks[0 : len(kn.ks) + 1]     // Make space in the key array
-    copy(kn.ks[index+1:], kn.ks[index:])  // Shift existing data out of the way
-    kn.ks[index] = kn.keyOf(key)
-
-    kn.vs = kn.vs[0 : len(kn.vs) + 1]     // Make space in the value array
-    copy(kn.vs[index+1:], kn.vs[index:])  // Shift existing data out of the way
-    kn.vs[index] = kn.valueOf(key)
-
-    kn.size = len(kn.ks)
-    max := kn.store.maxKeys()
-    if kn.size <= max {
-        return kn, nil, bkey{}
-    }
-    spawnKn, median := kn.split()
-    return kn, spawnKn, median.(bkey)
-}
-
-func (in *inode) insert(key Key, v Value) (Node, Node, bkey) {
-    index, _, exists := in.searchGE(key)
-    if exists {
-        panic("We expect a delete before insert\n")
-    }
-
-    in = in.copyOnWrite().(*inode)
-    child, spawn, median := in.store.fetchNode( in.vs[index] ).insert(key, v)
-    in.vs[index] = child.getKnode().fpos
-    if spawn == nil {
-        return in, nil, bkey{}
-    }
-
-    in.ks = in.ks[0 : len(in.ks)+1]         // Make space in the key array
-    copy( in.ks[index+1:], in.ks[index:] )  // Shift existing data out of the way
-    in.ks[index] = median
-
-    in.vs = in.vs[0 : len(in.vs)+1]         // Make space in the value array
-    copy(in.vs[index+2:], in.vs[index+1:])  // Shift existing data out of the way
-    in.vs[index+1] = spawn.getKnode().fpos
-
-    in.size = len(in.ks)
-    max := in.store.maxKeys()
-    if in.size <= max {
-        return in, nil, bkey{}
-    }
-
-    // Now this node is too full, so we have to split
-    spawnIn, medianN := in.split()
-    return in, spawnIn, medianN.(bkey)
 }
 
 //---- lookup
 func (kn *knode) lookup(key Key, emit Emitter) {
-    index, exists, _ := kn.searchGE(key)
-    if exists == false {
-        emit(nil)
-    }
-    emit( kn.store.fetchValue( kn.vs[index] ))
-    for i := index+1; i < len(kn.ks); i++ {
-        keyb := kn.store.fetchKey( kn.ks[i].kpos )
+    index, _, _ := kn.searchGE(key)
+    for i := index; i < kn.size; i++ {
+        keyb := kn.store.fetchKey(kn.ks[i].kpos)
         if keyeq, _ := key.Equal(keyb, nil); keyeq {
-            emit( kn.store.fetchValue( kn.vs[i] ))
+            emit(kn.store.fetchValue(kn.vs[i]))
+        } else {
+            break
         }
     }
 }
 
 func (in *inode) lookup(key Key, emit Emitter) {
     index, _, _ := in.searchGE(key)
-    for i := index; i < len(in.ks); i++ {
-        in.store.fetchKey( in.ks[i].kpos )
-        in.store.fetchNode( in.vs[i] ).lookup(key, emit)
+    for i := index; i < in.size+1; i++ {
+        in.store.FetchNode(in.vs[i]).lookup(key, emit)
+        if i < in.size {
+            keyb := in.store.fetchKey(in.ks[i].kpos)
+            if keyeq, _ := key.Equal(keyb, nil); keyeq == false {
+                break
+            }
+        }
     }
 }
 
-//---- remove
-func (kn *knode) remove(key Key) (Node, bool, []byte) {
-    index, exists, _ := kn.searchGE(key)
-    if exists == false {
-        return nil, false, nil
+// Convinience method
+func (kn *knode) show(level int) {
+    prefix := ""
+    for i := 0; i < level; i++ {
+        prefix += "  "
     }
-
-    kn = kn.copyOnWrite().(*knode)
-    copy(kn.ks[index:], kn.ks[index+1:])
-    kn.ks = kn.ks[0: len(kn.ks)-1]
-    kn.size = len(kn.ks)
-
-    valb := kn.store.fetchValue( kn.vs[index] )
-    if kn.size >= kn.store.rebalanceThrs {
-        return kn, false, valb
-    }
-    return kn, true, valb
+    fmt.Printf(
+        "%vleaf:%v size:%v fill: %v/%v, %v/%v, at fpos %v\n",
+        prefix, kn.leaf, kn.size, len(kn.ks), cap(kn.ks), len(kn.vs),
+        cap(kn.vs), kn.fpos,
+    )
 }
 
-func (in *inode) remove(key Key) (Node, bool, []byte) {
-    index, _, _ := in.searchGE(key)
-    child, rebalnc, valb :=  in.store.fetchNode( in.vs[index] ).remove(key)
-    in = in.copyOnWrite().(*inode)
-    in.vs[index] = child.getKnode().fpos
-
-    if rebalnc == false {
-        return in, false, valb
+func (in *inode) show(level int) {
+    prefix := ""
+    for i := 0; i < level; i++ {
+        prefix += "  "
     }
-
-    if rebalnc && index > 0 {
-        left := in.store.fetchNode( in.vs[index-1] ).copyOnWrite()
-        in.vs[index-1] = left.getKnode().fpos
-        rebalanceLeft(in, index, child, left)
+    (&in.knode).show(level)
+    in.store.FetchNode(in.vs[0]).show(level+1)
+    for i, bk := range in.ks {
+        fmt.Printf("%v%vth key %v & %v\n", prefix, i, bk.kpos, bk.dpos)
+        in.store.FetchNode(in.vs[i+1]).show(level+1)
     }
-    if rebalnc && index+1 < in.size {
-        right := in.store.fetchNode( in.vs[index+1] ).copyOnWrite()
-        in.vs[index+1] = right.getKnode().fpos
-        rebalanceRight(in, index, child, right)
-    }
-
-    if in.size >= in.store.rebalanceThrs {
-        return in, false, valb
-    }
-    return in, true, valb
+    fmt.Printf("%vdirtychild %v\n", prefix, in.dirtychild)
 }
 
-func rebalanceLeft(in *inode, index int, child Node, left Node) {
-    count := balance(child, left)
-    median :=  in.ks[index-1]
-    if count == 0 {
-        left.merge(child, median)
-        // The median has to go
-        copy(in.ks[index-1:], in.ks[index:])
-        in.ks = in.ks[0: len(in.ks)-1]
-        // Child has to go
-        copy(in.vs[index:], in.vs[index+1:])
-        in.vs = in.vs[0: len(in.ks)]
-        in.size = len(in.ks)
+func (kn *knode) showKeys(level int) {
+    prefix := ""
+    for i := 0; i < level; i++ {
+        prefix += "  "
+    }
+    for _, bk := range kn.ks {
+        keyb := kn.store.fetchKey(bk.kpos)
+        docb := kn.store.fetchKey(bk.dpos)
+        fmt.Println(prefix, string(keyb), " ; ", string(docb))
+    }
+}
+
+func (in *inode) showKeys(level int) {
+    prefix := ""
+    for i := 0; i < level; i++ {
+        prefix += "  "
+    }
+    for i, bk := range in.ks {
+        in.store.FetchNode(in.vs[i]).showKeys(level+1)
+        keyb := in.store.fetchKey(bk.kpos)
+        docb := in.store.fetchKey(bk.dpos)
+        fmt.Println(prefix, "*", string(keyb), " ; ", string(docb))
+    }
+    in.store.FetchNode(in.vs[in.size]).showKeys(level+1)
+}
+
+func (kn *knode) levelCount(level int, acc []int64, ic, kc int64) ([]int64, int64, int64) {
+    if len(acc) == level {
+        acc = append(acc, int64(kn.size))
     } else {
-        in.ks[index-1] = left.rotateRight(child, count, median)
+        acc[level] += int64(kn.size)
     }
+    return acc, ic, kc+1
 }
 
-func rebalanceRight(in *inode, index int, child Node, right Node) {
-    count := balance(child, right)
-    median := in.ks[index]
-    if count == 0 {
-        child.merge(right, median)
-        // The median has to go
-        copy(in.ks[index:], in.ks[index+1:])
-        in.ks = in.ks[0: len(in.ks)-1]
-        // Right has to go
-        copy(in.vs[index+1:], in.vs[index+2:])
-        in.vs = in.vs[0: len(in.ks)]
-        in.size = len(in.ks)
+func (in *inode) levelCount(level int, acc []int64, ic, kc int64) ([]int64, int64, int64) {
+    if len(acc) == level {
+        acc = append(acc, int64(in.size))
     } else {
-        in.ks[index] = child.rotateLeft(right, count, median)
+        acc[level] += int64(in.size)
     }
-}
-
-func balance(to Node, node Node) int {
-    kn := node.getKnode()
-    max := kn.store.maxKeys()
-    size := kn.size + to.getKnode().size
-    if float64(size) < (float64(max) * float64(0.6)) {  // FIXME magic number ??
-        return 0
-    } else {
-        return (kn.size - kn.store.rebalanceThrs) / 2
+    for _, v := range in.vs {
+        acc, ic, kc = in.store.FetchNode(v).levelCount(level+1, acc, ic, kc)
     }
+    return acc, ic+1, kc
 }
