@@ -53,9 +53,9 @@ type Indexer interface {
     // Count number of key,value pairs in this index.
     Count() int64
 
-    // Return key-bytes, docid-bytes, control-word and value byte of the first
+    // Return key-bytes, docid-bytes, and value bytes of the first
     // element in the list
-    Front() (uint32, []byte, []byte, []byte)
+    Front() ([]byte, []byte, []byte)
 
     // Check whether `key` is present in the index.
     Contains(Key) bool
@@ -139,13 +139,13 @@ func (bt *BTree) Close() {
 // Insert key and value pair
 func (bt *BTree) Insert(k Key, v Value) bool {
     root, staleroot, timestamp := bt.store.Root(true) // root with transaction
-    root, spawn, median, stalenodes := root.insert(k, v)
+    root, spawn, mk, md, stalenodes := root.insert(k, v)
     stalenodes = append(stalenodes, staleroot)
     if spawn != nil {
         in := (&inode{}).newNode(bt.store)
 
-        in.ks[0] = median
-        in.ks = in.ks[:1]
+        in.ks[0], in.ds[0] = mk, md
+        in.ks, in.ds = in.ks[:1], in.ds[:1]
         in.size = len(in.ks)
 
         in.vs[0] = root.getKnode().fpos
@@ -166,11 +166,11 @@ func (bt *BTree) Count() int64 {
     return count
 }
 
-func (bt *BTree) Front() (uint32, []byte, []byte, []byte) {
+func (bt *BTree) Front() ([]byte, []byte, []byte) {
     root, _, timestamp := bt.store.Root(false)
-    a, b, c, d := root.front()
+    b, c, d := root.front()
     bt.store.Release(false, nil, timestamp)
-    return a, b, c, d
+    return b, c, d
 }
 
 func (bt *BTree) Contains(key Key) bool {
@@ -191,10 +191,10 @@ func (bt *BTree) FullSet() <-chan []byte {
     c := make(chan []byte)
     go func() {
         root, _, timestamp := bt.store.Root(false)
-        root.traverse(func(k bkey, v int64) {
-            c <- bt.store.fetchKey(k.kpos)
-            c <- bt.store.fetchDocid(k.dpos)
-            c <- bt.store.fetchValue(v)
+        root.traverse(func(kpos int64, dpos int64, vpos int64) {
+            c <- bt.store.fetchKey(kpos)
+            c <- bt.store.fetchDocid(dpos)
+            c <- bt.store.fetchValue(vpos)
         })
         bt.store.Release(false, nil, timestamp)
         close(c)
@@ -206,8 +206,8 @@ func (bt *BTree) KeySet() <-chan []byte {
     c := make(chan []byte)
     go func() {
         root, _, timestamp := bt.store.Root(false)
-        root.traverse(func(k bkey, v int64) {
-            c <- bt.store.fetchKey(k.kpos)
+        root.traverse(func(kpos int64, dpos int64, vpos int64) {
+            c <- bt.store.fetchKey(kpos)
         })
         bt.store.Release(false, nil, timestamp)
         close(c)
@@ -219,8 +219,8 @@ func (bt *BTree) DocidSet() <-chan []byte {
     c := make(chan []byte)
     go func() {
         root, _, timestamp := bt.store.Root(false)
-        root.traverse(func(k bkey, v int64) {
-            c <- bt.store.fetchDocid(k.dpos)
+        root.traverse(func(kpos int64, dpos int64, vpos int64) {
+            c <- bt.store.fetchDocid(dpos)
         })
         bt.store.Release(false, nil, timestamp)
         close(c)
@@ -232,8 +232,8 @@ func (bt *BTree) ValueSet() <-chan []byte {
     c := make(chan []byte)
     go func() {
         root, _, timestamp := bt.store.Root(false)
-        root.traverse(func(k bkey, v int64) {
-            c <- bt.store.fetchValue(v)
+        root.traverse(func(kpos int64, dpos int64, vpos int64) {
+            c <- bt.store.fetchValue(vpos)
         })
         bt.store.Release(false, nil, timestamp)
         close(c)

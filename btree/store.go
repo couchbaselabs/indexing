@@ -19,7 +19,6 @@
 package btree
 
 import (
-    "bytes"
     "fmt"
     "sync/atomic"
     "os"
@@ -48,7 +47,7 @@ type Store struct {
 
 // Construct a new `Store` object.
 func NewStore(conf Config) *Store {
-    wstore := openWStore(conf)
+    wstore := OpenWStore(conf)
     store := &Store{
         Config: conf,
         wstore: wstore,
@@ -64,16 +63,17 @@ func NewStore(conf Config) *Store {
 func (store *Store) Close() {
     store.kvRfd.Close(); store.kvRfd = nil
     store.idxRfd.Close(); store.idxRfd = nil
-    store.wstore.closeWStore(); store.wstore = nil
+    store.wstore.CloseWStore(); store.wstore = nil
 }
 
-// Destroy is opposite of Create, it cleans up the datafiles.
+// Destroy is opposite of Create, it cleans up the datafiles. Data files will
+// be deleted only when all references to WStore is removed.
 func (store *Store) Destroy() {
     store.kvRfd.Close(); store.kvRfd = nil
     store.idxRfd.Close(); store.idxRfd = nil
     // Close and destroy
-    if store.wstore.closeWStore() {
-        store.wstore.destroyWStore();
+    if store.wstore.CloseWStore() {
+        store.wstore.DestroyWStore();
     }
     store.wstore = nil
 }
@@ -126,8 +126,7 @@ func (store *Store) FetchNode(fpos int64) Node {
     if _, err := store.idxRfd.ReadAt(data, fpos); err != nil {
         panic(err.Error())
     }
-    buf := bytes.NewBuffer(data)
-    b := (&block{}).load(store, buf)
+    b := (&block{}).newBlock(0, store.maxKeys()); b.gobDecode(data)
     kn := knode{block:*b, store:store, fpos:fpos}
     if b.isLeaf() {
         node = &kn
@@ -143,12 +142,30 @@ func (store *Store) FetchNode(fpos int64) Node {
 // Maximum number of keys that are stored in a btree block, it is always an
 // even number and adjusted for the additional value entry.
 func (store *Store) maxKeys() int {
-    max := (store.Blocksize-BLK_OVERHEAD) / (BLK_KEY_SIZE+BLK_VALUE_SIZE)
-    max -= 1            // for n keys there will be n+1 values
-    if max % 2 == 0 {   // fix max as even value.
-        return int(max)
-    } else {
-        return int(max-1)
+    return int(store.wstore.head.maxkeys)
+}
+
+func calculateMaxKeys(blocksize int64) int64 {
+    max64 := int64(9223372036854775807-1)
+    start := int64(float64(blocksize-14) / (10.1875*3))
+    inc := int64(2)
+    for i := start; ; {
+        b := (&block{leaf:TRUE}).newBlock(int(i), int(i))
+        for j := int64(0); j < i; j++ {
+            b.ks[j] = max64; b.ds[j] = max64; b.vs[j] = max64
+        }
+        if int64(len(b.gobEncode())) > blocksize {
+            if inc > 4 {
+                i -= inc/2; inc = 2
+                continue
+            }
+            max :=  i-2
+            if max % 2 == 0 {   // fix max as even value.
+                return max
+            }
+            return max-1
+        }
+        i += inc; inc *= 2
     }
 }
 

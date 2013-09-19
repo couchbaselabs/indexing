@@ -17,11 +17,13 @@ func main() {
     rfd, _ := os.Open(args[0])
 
     rfd.Seek(0, os.SEEK_SET)
-    root, sectorsize, flistsize, blocksize, pick, crc := readHead(rfd)
+    root, sectorsize, flistsize, blocksize, maxkeys, pick, crc :=
+            readHead(rfd)
     fmt.Printf("Root       : %v\n", root)
     fmt.Printf("Sectorsize : %v\n", sectorsize)
     fmt.Printf("Flistsize  : %v\n", flistsize)
     fmt.Printf("Blocksize  : %v\n", blocksize)
+    fmt.Printf("Blocksize  : %v\n", maxkeys)
     fmt.Printf("Pick       : %v\n", pick)
     fmt.Printf("CRC        : %v\n", crc)
 
@@ -29,17 +31,18 @@ func main() {
     fmt.Println(freefpos(rfd, flistsize))
 }
 
-func readHead(rfd *os.File) (int64, int64, int64, int64, int64, uint32) { 
-    var root, sectorsize, flistsize, blocksize, pick int64
+func readHead(rfd *os.File) (int64, int64, int64, int64, int64, int64, uint32) {
+    var root, sectorsize, flistsize, blocksize, maxkeys, pick int64
     var crc uint32
     LittleEndian := binary.LittleEndian
     binary.Read(rfd, LittleEndian, &root)
     binary.Read(rfd, LittleEndian, &sectorsize)
     binary.Read(rfd, LittleEndian, &flistsize)
     binary.Read(rfd, LittleEndian, &blocksize)
+    binary.Read(rfd, LittleEndian, &maxkeys)
     binary.Read(rfd, LittleEndian, &pick)
     binary.Read(rfd, LittleEndian, &crc)
-    return root, sectorsize, flistsize, blocksize, pick, crc
+    return root, sectorsize, flistsize, blocksize, maxkeys, pick, crc
 }
 
 func freefpos(rfd *os.File, flistsize int64) []int64 {

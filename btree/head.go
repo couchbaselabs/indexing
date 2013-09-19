@@ -4,6 +4,7 @@
 //      sectorsize int64
 //      flistsize int64
 //      blocksize int64
+//      maxkeys int64
 //      pick int64
 //      crc uint32
 
@@ -23,6 +24,7 @@ type Head struct {
     sectorsize int64 // head sector-size in bytes.
     flistsize int64  // free-list size in bytes.
     blocksize int64  // btree block size in bytes.
+    maxkeys int64    // Maximum number of keys that can be store in btree block.
     root int64       // file-offset into index file that has root block
     rootN Node       // root Node.
     fpos_head1 int64 // file-offset into index file where 1st-head is
@@ -38,6 +40,7 @@ func newHead(wstore *WStore) *Head {
         sectorsize: wstore.Sectorsize,
         flistsize: wstore.Flistsize,
         blocksize: wstore.Blocksize,
+        // blocksize: calculateMaxKeys(wstore.Blocksize), Don't uncomment
         dirty: false,
         root: 0,
         fpos_head1: 0,
@@ -67,6 +70,9 @@ func (hd *Head) fetch() bool {
     }
     if err:= binary.Read(rfd, LittleEndian, &hd.blocksize); err != nil {
         panic("Unable to read blocksize from first head sector")
+    }
+    if err:= binary.Read(rfd, LittleEndian, &hd.maxkeys); err != nil {
+        panic("Unable to read maxkeys from first head sector")
     }
     if err:= binary.Read(rfd, LittleEndian, &hd.pick); err != nil {
         panic("Unable to read pick from first head sector")
@@ -110,6 +116,7 @@ func (hd *Head) flush(crc uint32) *Head {
     binary.Write(buf, LittleEndian, &hd.sectorsize);
     binary.Write(buf, LittleEndian, &hd.flistsize);
     binary.Write(buf, LittleEndian, &hd.blocksize);
+    binary.Write(buf, LittleEndian, &hd.maxkeys);
     binary.Write(buf, LittleEndian, &hd.pick);
     binary.Write(buf, LittleEndian, &hd.crc);
 

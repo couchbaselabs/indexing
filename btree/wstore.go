@@ -1,22 +1,23 @@
+// Contains necessary functions to do index writing.
 package btree
 
 import (
-    "bytes"
     "fmt"
-    "syscall"
-    "sync"
-    "path/filepath"
     "os"
+    "path/filepath"
+    "sync"
+    "syscall"
 )
 
 var _ = fmt.Sprintln("keep 'fmt' import during debugging", syscall.F_NOCACHE);
 
 // WStore instances are created for each index. If applications tend to create
-// multiple stores, writes are serialized and concurrent reads are allowed.
+// multiple stores for the same index file, they will refer to the same
+// wstore.
 var writeStores = make(map[string]*WStore)
-var wmu sync.Mutex
+var wmu sync.Mutex // Protected access to `writeStores`
 
-// structure that serializes write.
+// structure that handles write.
 type WStore struct {
     Config
     // More than one *Store can refer to a single instance of *WStore. Don't
@@ -47,15 +48,17 @@ type WStoreStats struct {
     reclaimedFpos int64
 }
 
-//---- New reference to write-store.
-func openWStore(conf Config) *WStore {
+// Main API to get or instantiate a write-store. If write-store for this index
+// file is already created, it will bre returned after incrementing the 
+// reference count.
+func OpenWStore(conf Config) *WStore {
     var wstore *WStore
     defer func() {
         wstore.req <- []interface{}{WS_SAYHI} // Say hi
         <-wstore.res
     }()
-    wstore = getWStore(conf)
-    if wstore == nil {
+    wstore = getWStore(conf) // Try getting a write-store
+    if wstore == nil { // nil means we have to create a new index file
         idxfile, _ := filepath.Abs(conf.Idxfile)
         // If index file is not even created, then create a new index file.
         createWStore(conf)
@@ -71,11 +74,44 @@ func openWStore(conf Config) *WStore {
     return wstore
 }
 
+// Close write-Store
+func (wstore *WStore) CloseWStore() bool {
+    if derefWSTore(wstore) && (wstore.refcount == 0) {
+        // Persist
+        wstore.reclaimBlocks(true)
+        wstore.flushCommit(true, 0) // force flush !
+        crc := wstore.freelist.flush() // then this
+        wstore.head.flush(crc) // finally this
+        // Cleanup
+        wstore.kvWfd.Close();  wstore.kvWfd = nil
+        wstore.idxWfd.Close(); wstore.idxWfd = nil
+        wstore.judgementDay()
+        close(wstore.req); wstore.req = nil
+        close(wstore.res); wstore.res = nil
+        close(wstore.translock); wstore.translock = nil
+        return true
+    }
+    return false
+}
+
+// Destroy is opposite of Create, it cleans up the datafiles.
+func (wstore *WStore) DestroyWStore() {
+    if _, err := os.Stat(wstore.Idxfile); err == nil {
+        os.Remove(wstore.Idxfile)
+    }
+    if _, err := os.Stat(wstore.Kvfile); err == nil {
+        os.Remove(wstore.Kvfile)
+    }
+}
+
+// Use `wmu` exclusion lock to fetch an existing write-store. By existing we
+// refer an already instantiated write-store for this index file, or a new
+// instance of the write-store if index file is present. If index file is
+// not-found return nil.
 func getWStore(conf Config) *WStore {
     var wstore *WStore
     idxfile, _ := filepath.Abs(conf.Idxfile)
-    // Protected access
-    wmu.Lock()
+    wmu.Lock() // Protected access
     defer wmu.Unlock()
 
     wstore = writeStores[idxfile]
@@ -95,24 +131,36 @@ func getWStore(conf Config) *WStore {
     return wstore
 }
 
-// Close write-Store
-func (wstore *WStore) closeWStore() bool {
-    if derefWSTore(wstore) && (wstore.refcount == 0) {
-        // Persist
-        wstore.reclaimBlocks(true)
-        wstore.flushCommit(true, 0) // force flush !
-        crc := wstore.freelist.flush() // then this
-        wstore.head.flush(crc) // finally this
-        // Cleanup
-        wstore.kvWfd.Close();  wstore.kvWfd = nil
-        wstore.idxWfd.Close(); wstore.idxWfd = nil
-        wstore.judgementDay()
-        close(wstore.req); wstore.req = nil
-        close(wstore.res); wstore.res = nil
-        close(wstore.translock); wstore.translock = nil
-        return true
+// New instance of wstore.
+func newWStore(conf Config) *WStore {
+    idxmode, kvmode := os.O_WRONLY, os.O_APPEND | os.O_WRONLY
+    // open in durability mode.
+    if conf.Sync {
+        idxmode |= os.O_SYNC
+        kvmode |= os.O_SYNC
     }
-    return false
+    if conf.Nocache {
+        idxmode |= syscall.F_NOCACHE
+        kvmode |= syscall.F_NOCACHE
+    }
+    wstore := &WStore{
+        Config: conf,
+        refcount: 1,
+        idxWfd: openWfd(conf.Idxfile, idxmode, 0660),
+        kvWfd: openWfd(conf.Kvfile, kvmode, 0660),
+        fpos_firstblock: conf.Sectorsize*2 + conf.Flistsize*2,
+        MVCC: MVCC{
+            nodecache: make(map[int64]Node),
+            accessQ: make([]int64, 0),
+            reclaimQ: make([]ReclaimData, 0),
+            commitQ: make(map[int64]Node),
+            // Serialization.
+            req: make(chan []interface{}),
+            res: make(chan []interface{}),
+            translock: make(chan bool, 1),
+        },
+    }
+    return wstore
 }
 
 // Lock and dereference the wstore before closing it.
@@ -156,14 +204,15 @@ func createWStore(conf Config) {
     wstore.head.sectorsize = wstore.Sectorsize
     wstore.head.flistsize = wstore.Flistsize
     wstore.head.blocksize = wstore.Blocksize
+    wstore.head.maxkeys = calculateMaxKeys(wstore.Blocksize)
 
     // Setup the head and freelist on disk.
     wstore.appendBlocks(wstore.fpos_firstblock, wstore.freelist.limit())
 
     // Root : Fetch a new node from freelist for root and setup.
     fpos := wstore.freelist.pop()
-    b := block{leaf: TRUE, size: 0, ks:make([]bkey, 0), vs: make([]int64, 1)}
-    root := &knode{block: b, fpos: fpos, dirty: true}
+    b := (&block{leaf: TRUE}).newBlock(0, 0)
+    root := &knode{block: *b, fpos: fpos, dirty: true}
     wstore.flushNode(root)
     wstore.head.setRoot(root.fpos)
     crc := wstore.freelist.flush()
@@ -176,56 +225,14 @@ func createWStore(conf Config) {
     close(wstore.translock); wstore.translock = nil
 }
 
-// Destroy is opposite of Create, it cleans up the datafiles.
-func (wstore *WStore) destroyWStore() {
-    if _, err := os.Stat(wstore.Idxfile); err == nil {
-        os.Remove(wstore.Idxfile)
-    }
-    if _, err := os.Stat(wstore.Kvfile); err == nil {
-        os.Remove(wstore.Kvfile)
-    }
-}
-
-func newWStore(conf Config) *WStore {
-    idxmode := os.O_WRONLY 
-    kvmode := os.O_APPEND | os.O_WRONLY
-    if conf.Sync {
-        idxmode |= os.O_SYNC
-        kvmode |= os.O_SYNC
-    }
-    if conf.Nocache {
-        idxmode |= syscall.F_NOCACHE
-        kvmode |= syscall.F_NOCACHE
-    }
-    wstore := &WStore{
-        Config: conf,
-        refcount: 1,
-        idxWfd: openWfd(conf.Idxfile, idxmode, 0660),
-        kvWfd: openWfd(conf.Kvfile, kvmode, 0660),
-        fpos_firstblock: conf.Sectorsize*2 + conf.Flistsize*2,
-        MVCC: MVCC{
-            nodecache: make(map[int64]Node),
-            accessQ: make([]int64, 0),
-            reclaimQ: make([]ReclaimData, 0),
-            commitQ: make(map[int64]Node),
-            // Serialization.
-            req: make(chan []interface{}),
-            res: make(chan []interface{}),
-            translock: make(chan bool, 1),
-        },
-    }
-    return wstore
-}
-
-// appendBlocks will add new free blocks at the end of the index-file. Number
-// of free blocks added will depend on the head room available in the
-// freelist. Add newly appended block into the freelist and flush the same.
-//
-// Returns a slice of offsets, each element is a file-position of
-// newly appened file-block.
+// appendBlocks will add new free blocks at the end of the index-file. New
+// offsets will be added to the in-memory copy of the freelist and the same
+// slice of offsets will be returned back to the caller.
 // 
 // If `fpos` is passed as 0, then free blocks will be create starting from
-// SEEK_END, otherwise it will be created from specified `fpos`
+// SEEK_END, otherwise it will be created from specified `fpos`.
+//
+// If `limit` > 0, will limit the number of blocks appended.
 func (wstore *WStore) appendBlocks(fpos int64, limit int) []int64 {
     var err error
     max := wstore.maxFreeBlocks()
@@ -264,9 +271,7 @@ func (wstore *WStore) appendBlocks(fpos int64, limit int) []int64 {
 
 func (wstore *WStore) flushNode(node Node) {
     kn := node.getKnode()
-    buf := new(bytes.Buffer)
-    kn.dump(buf)
-    if data := buf.Bytes(); len(data) <= int(wstore.Blocksize) {
+    if data := kn.gobEncode(); len(data) <= int(wstore.Blocksize) {
         wstore.idxWfd.WriteAt(data, kn.fpos)
         wstore.dumpCounts += 1 // stats
     } else {

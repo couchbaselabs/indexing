@@ -39,10 +39,8 @@ func (kn *knode) newNode(store *Store) *knode {
     fpos := store.wstore.popFreelist()
 
     max := store.maxKeys() // always even
-    newks := make([]bkey, max/2, max+1)
-    newvs := make([]int64, max/2+1, max+2)
-    b := block{leaf: TRUE, size: 0, ks: newks, vs: newvs}
-    newkn := &knode{block: b, store: store, fpos: fpos, dirty: true}
+    b := (&block{leaf: TRUE}).newBlock(max/2, max)
+    newkn := &knode{block: *b, store: store, fpos: fpos, dirty: true}
     store.wstore.commit(newkn)
     return newkn
 }
@@ -52,10 +50,8 @@ func (in *inode) newNode(store *Store) *inode {
     fpos := store.wstore.popFreelist()
 
     max := store.maxKeys() // always even
-    newks := make([]bkey, max/2, max+1)
-    newvs := make([]int64, max/2+1, max+2)
-    b := block{leaf: FALSE, size: 0, ks: newks, vs: newvs}
-    kn := knode{block: b, store: store, fpos: fpos, dirty:true}
+    b := (&block{leaf: FALSE}).newBlock(max/2, max)
+    kn := knode{block: *b, store: store, fpos: fpos, dirty:true}
     newin := &inode{knode: kn}
     store.wstore.commit(newin)
     return newin

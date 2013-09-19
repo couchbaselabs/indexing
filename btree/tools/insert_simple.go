@@ -23,8 +23,8 @@ func main() {
         Kvfile: kvfile,
         IndexConfig: btree.IndexConfig{
             Sectorsize: 512,
-            Flistsize: 100 * btree.OFFSET_SIZE,
-            Blocksize: 512,
+            Flistsize: 1000 * btree.OFFSET_SIZE,
+            Blocksize: 64*1024,
         },
         Maxlevel: 6,
         RebalanceThrs: 6,
@@ -49,8 +49,8 @@ func main() {
     }
 
     // Front() API: Get the first key
-    frontC, frontK, frontD, frontV := bt.Front()
-    fmt.Println(frontC, string(frontK), frontD, frontV)
+    frontK, frontD, frontV := bt.Front()
+    fmt.Println(string(frontK), frontD, frontV)
 
     // KeySet() API: Check whether sorted
     ch := bt.KeySet()

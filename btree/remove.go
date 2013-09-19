@@ -7,7 +7,9 @@ func (kn *knode) remove(key Key) (Node, bool, []Node) {
     }
 
     copy(kn.ks[index:], kn.ks[index+1:])
+    copy(kn.ds[index:], kn.ds[index+1:])
     kn.ks = kn.ks[:len(kn.ks)-1]
+    kn.ds = kn.ds[:len(kn.ds)-1]
     kn.size = len(kn.ks)
 
     copy(kn.vs[index:], kn.vs[index+1:])
@@ -56,12 +58,14 @@ func (in *inode) remove(key Key) (Node, bool, []Node) {
 
 func rebalanceLeft(in *inode, index int, child Node, left Node) (Node, []Node) {
     count := child.balance(left)
-    median :=  in.ks[index-1]
+    mk, md :=  in.ks[index-1], in.ds[index-1]
     if count == 0 { // We can merge with left child
-        _, stalenodes := left.mergeRight(child, median)
+        _, stalenodes := left.mergeRight(child, mk, md)
         // The median has to go
         copy(in.ks[index-1:], in.ks[index:])
+        copy(in.ds[index-1:], in.ds[index:])
         in.ks = in.ks[:len(in.ks)-1]
+        in.ds = in.ds[:len(in.ds)-1]
         in.size = len(in.ks)
         // left-child has to go
         copy(in.vs[index-1:], in.vs[index:])
@@ -69,7 +73,7 @@ func rebalanceLeft(in *inode, index int, child Node, left Node) (Node, []Node) {
         return in, stalenodes
     } else {
         staleleft := left.copyOnWrite()
-        in.ks[index-1] = left.rotateRight(child, count, median)
+        in.ks[index-1], in.ds[index-1] = left.rotateRight(child, count, mk, md)
         in.vs[index-1] = left.getKnode().fpos
         return in, []Node{staleleft}
     }
@@ -77,16 +81,18 @@ func rebalanceLeft(in *inode, index int, child Node, left Node) (Node, []Node) {
 
 func rebalanceRight(in *inode, index int, child Node, right Node) (Node, []Node) {
     count := child.balance(right)
-    median := in.ks[index]
+    mk, md := in.ks[index], in.ds[index]
     if count == 0 {
-        child, stalenodes := child.mergeLeft(right, median)
+        child, stalenodes := child.mergeLeft(right, mk, md)
         if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
             stalenodes = append(stalenodes, in)
             return child, stalenodes
         } else {
             // The median has to go
             copy(in.ks[index:], in.ks[index+1:])
+            copy(in.ds[index:], in.ds[index+1:])
             in.ks = in.ks[:len(in.ks)-1]
+            in.ds = in.ds[:len(in.ds)-1]
             in.size = len(in.ks)
             // right child has to go
             copy(in.vs[index+1:], in.vs[index+2:])
@@ -95,7 +101,7 @@ func rebalanceRight(in *inode, index int, child Node, right Node) (Node, []Node)
         }
     } else {
         staleright := right.copyOnWrite()
-        in.ks[index] = child.rotateLeft(right, count, median)
+        in.ks[index], in.ds[index] = child.rotateLeft(right, count, mk, md)
         in.vs[index+1] = right.getKnode().fpos
         return in, []Node{staleright}
     }
@@ -118,15 +124,18 @@ func (from *inode) balance(to Node) int {
 // Merge `kn` into `other` Node, and return,
 //  - merged `other` node,
 //  - `kn` as stalenode
-func (kn *knode) mergeRight(othern Node, median bkey) (Node, []Node) {
+func (kn *knode) mergeRight(othern Node, mk, md int64) (Node, []Node) {
     other := othern.(*knode)
     max := kn.store.maxKeys()
     if kn.size + other.size >= max {
         panic("We cannot merge knodes now. Combined size is greater")
     }
     other.ks = other.ks[:kn.size+other.size]
+    other.ds = other.ds[:kn.size+other.size]
     copy(other.ks[kn.size:], other.ks[:other.size])
+    copy(other.ds[kn.size:], other.ds[:other.size])
     copy(other.ks[:kn.size], kn.ks)
+    copy(other.ds[:kn.size], kn.ds)
 
     other.vs = other.vs[:kn.size+other.size+1]
     copy(other.vs[kn.size:], other.vs[:other.size+1])
@@ -138,16 +147,19 @@ func (kn *knode) mergeRight(othern Node, median bkey) (Node, []Node) {
 // Merge `in` into `other` Node, and return,
 //  - merged `other` node,
 //  - `in` as stalenode
-func (in *inode) mergeRight(othern Node, median bkey) (Node, []Node) {
+func (in *inode) mergeRight(othern Node, mk, md int64) (Node, []Node) {
     other := othern.(*inode)
     max := in.store.maxKeys()
     if (in.size + other.size + 1) >= max {
         panic("We cannot merge inodes now. Combined size is greater")
     }
     other.ks = other.ks[:in.size+other.size+1]
+    other.ds = other.ds[:in.size+other.size+1]
     copy(other.ks[in.size+1:], other.ks[:other.size])
+    copy(other.ds[in.size+1:], other.ds[:other.size])
     copy(other.ks[:in.size], in.ks)
-    other.ks[in.size] = median
+    copy(other.ds[:in.size], in.ds)
+    other.ks[in.size], other.ds[in.size] = mk, md
 
     other.vs = other.vs[:in.size+other.size+2]
     copy(other.vs[in.size+1:], other.vs)
@@ -158,14 +170,16 @@ func (in *inode) mergeRight(othern Node, median bkey) (Node, []Node) {
 // Merge `other` into `kn` Node, and return,
 //  - merged `kn` node,
 //  - `other` as stalenode
-func (kn *knode) mergeLeft(othern Node, median bkey) (Node, []Node) {
+func (kn *knode) mergeLeft(othern Node, mk, md int64) (Node, []Node) {
     other := othern.(*knode)
     max := kn.store.maxKeys()
     if kn.size + other.size >= max {
         panic("We cannot merge knodes now. Combined size is greater")
     }
     kn.ks = kn.ks[:kn.size+other.size]
+    kn.ds = kn.ds[:kn.size+other.size]
     copy(kn.ks[kn.size:], other.ks)
+    copy(kn.ds[kn.size:], other.ds)
 
     kn.vs = kn.vs[:kn.size+other.size+1]
     copy(kn.vs[kn.size:], other.vs[:other.size+1])
@@ -176,15 +190,17 @@ func (kn *knode) mergeLeft(othern Node, median bkey) (Node, []Node) {
 // Merge `other` into `in` Node, and return,
 //  - merged `in` node,
 //  - `other` as stalenode
-func (in *inode) mergeLeft(othern Node, median bkey) (Node, []Node) {
+func (in *inode) mergeLeft(othern Node, mk, md int64) (Node, []Node) {
     other := othern.(*inode)
     max := in.store.maxKeys()
     if (in.size + other.size + 1) >= max {
         panic("We cannot merge inodes now. Combined size is greater")
     }
     in.ks = in.ks[:in.size+other.size+1]
+    in.ds = in.ds[:in.size+other.size+1]
     copy(in.ks[in.size+1:], other.ks[:other.size])
-    in.ks[in.size] = median
+    copy(in.ds[in.size+1:], other.ds[:other.size])
+    in.ks[in.size], in.ds[in.size] = mk, md
 
     in.vs = in.vs[:in.size+other.size+2]
     copy(in.vs[in.size+1:], other.vs[:other.size+1])
@@ -192,17 +208,21 @@ func (in *inode) mergeLeft(othern Node, median bkey) (Node, []Node) {
     return in, []Node{other}
 }
 
-// rotate `count` entries from `left` node to `childn` node. Return the median
-func (left *knode) rotateRight(childn Node, count int, median bkey) bkey {
-    child := childn.(*knode)
+// rotate `count` entries from `left` node to child `n` node. Return the median
+func (left *knode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
+    child := n.(*knode)
     chlen, leftlen := len(child.ks), len(left.ks)
 
     // Move last `count` keys from left -> child.
     child.ks = child.ks[:chlen+count]   // First expand
+    child.ds = child.ds[:chlen+count]   // First expand
     copy(child.ks[count:], child.ks[:chlen])
+    copy(child.ds[count:], child.ds[:chlen])
     copy(child.ks[:count], left.ks[leftlen-count:])
+    copy(child.ds[:count], left.ds[leftlen-count:])
     // Blindly shrink left keys
     left.ks = left.ks[:leftlen-count]
+    left.ds = left.ds[:leftlen-count]
     // Update size.
     left.size, child.size = len(left.ks), len(child.ks)
 
@@ -213,21 +233,26 @@ func (left *knode) rotateRight(childn Node, count int, median bkey) bkey {
     // Blinldy shrink left values and then append it with null pointer
     left.vs = append(left.vs[:leftlen-count], 0)
     // Return the median
-    return child.ks[0]
+    return child.ks[0], child.ds[0]
 }
 
-// rotate `count` entries from `left` node to `childn` node. Return the median
-func (left *inode) rotateRight(childn Node, count int, median bkey) bkey {
-    child := childn.(*inode)
-    left.ks = append(left.ks, median)
+// rotate `count` entries from `left` node to child `n` node. Return the median
+func (left *inode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
+    child := n.(*inode)
+    left.ks = append(left.ks, mk)
+    left.ds = append(left.ds, md)
     chlen, leftlen := len(child.ks), len(left.ks)
 
     // Move last `count` keys from left -> child.
     child.ks = child.ks[:chlen+count]   // First expand
+    child.ds = child.ds[:chlen+count]   // First expand
     copy(child.ks[count:], child.ks[:chlen])
+    copy(child.ds[count:], child.ds[:chlen])
     copy(child.ks[:count], left.ks[leftlen-count:])
+    copy(child.ds[:count], left.ds[leftlen-count:])
     // Blindly shrink left keys
     left.ks = left.ks[:leftlen-count]
+    left.ds = left.ds[:leftlen-count]
     // Update size.
     left.size, child.size = len(left.ks), len(child.ks)
 
@@ -236,24 +261,29 @@ func (left *inode) rotateRight(childn Node, count int, median bkey) bkey {
     copy(child.vs[count:], child.vs[:chlen+1])
     copy(child.vs[:count], left.vs[leftlen-count:])
     // Pop out median
-    median = left.ks[left.size-1]
+    mk, md = left.ks[left.size-1], left.ds[left.size-1]
     left.ks = left.ks[:left.size-1]
+    left.ds = left.ds[:left.size-1]
     left.size = len(left.ks)
     // Return the median
-    return median
+    return mk, md
 }
 
-// rotate `count` entries from `right` node to `child` node. Return the median
-func (child *knode) rotateLeft(rightn Node, count int, median bkey) bkey {
-    right := rightn.(*knode)
+// rotate `count` entries from right `n` node to `child` node. Return median
+func (child *knode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
+    right := n.(*knode)
     chlen := len(child.ks)
 
     // Move first `count` keys from right -> child.
     child.ks = child.ks[:chlen+count]  // First expand
+    child.ds = child.ds[:chlen+count]  // First expand
     copy(child.ks[chlen:], right.ks[:count])
+    copy(child.ds[chlen:], right.ds[:count])
     // Don't blindly shrink right keys
     copy(right.ks, right.ks[count:])
+    copy(right.ds, right.ds[count:])
     right.ks = right.ks[:len(right.ks)-count]
+    right.ds = right.ds[:len(right.ds)-count]
     // Update size.
     right.size, child.size = len(right.ks), len(child.ks)
 
@@ -265,20 +295,26 @@ func (child *knode) rotateLeft(rightn Node, count int, median bkey) bkey {
     copy(right.vs, right.vs[count:])
     right.vs = right.vs[:len(right.vs)-count+1]
     // Return the median
-    return right.ks[0]
+    return right.ks[0], right.ds[0]
 }
 
-func (child *inode) rotateLeft(rightn Node, count int, median bkey) bkey {
-    right := rightn.(*knode)
-    child.ks = append(child.ks, median)
+// rotate `count` entries from right `n` node to `child` node. Return median
+func (child *inode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
+    right := n.(*knode)
+    child.ks = append(child.ks, mk)
+    child.ds = append(child.ds, md)
     chlen := len(child.ks)
 
     // Move first `count` keys from right -> child.
     child.ks = child.ks[:chlen+count]  // First expand
+    child.ds = child.ds[:chlen+count]  // First expand
     copy(child.ks[chlen:], right.ks[:count])
+    copy(child.ds[chlen:], right.ds[:count])
     // Don't blindly shrink right keys
     copy(right.ks, right.ks[count:])
+    copy(right.ds, right.ds[count:])
     right.ks = right.ks[:len(right.ks)-count]
+    right.ds = right.ds[:len(right.ds)-count]
     // Update size.
     right.size, child.size = len(right.ks), len(child.ks)
 
@@ -290,10 +326,11 @@ func (child *inode) rotateLeft(rightn Node, count int, median bkey) bkey {
     right.vs = right.vs[:len(right.vs)-count+1]
 
     // Pop out median
-    median = child.ks[child.size-1]
+    mk, md = child.ks[child.size-1], child.ds[child.size-1]
     child.ks = child.ks[:child.size-1]
+    child.ds = child.ds[:child.size-1]
     child.size = len(child.ks)
     // Return the median
-    return median
+    return mk, md
 }
 
