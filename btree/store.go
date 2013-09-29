@@ -83,28 +83,33 @@ func (store *Store) Destroy() {
 // write access. It is assumed that there will be only one outstanding
 // transaction at any given time, so the caller has to make sure to acquire a
 // transaction lock from MVCC controller.
-func (store *Store) Root(transaction bool) (Node, Node, int64) {
-    var staleroot Node
-    root := store.FetchNode(atomic.LoadInt64(&store.wstore.head.root))
+func (store *Store) OpStart(transaction bool) (Node, *MV, int64) {
+    var mv *MV
+    var root Node
     if transaction {
         store.wstore.translock <- true
-        staleroot = root
-        root = root.copyOnWrite()
+        staleroot := store.FetchMVCCNode(mvRoot(store))
+        root = staleroot.copyOnWrite()
+        mv = &MV{stales: []Node{staleroot}, commits: []Node{root}}
+    } else {
+        root = store.FetchNode(store.currentRoot())
+        mv = &MV{stales: []Node{}, commits: []Node{}}
     }
     ts := store.wstore.access()
-    return root, staleroot, ts
+    return root, mv, ts
 }
 
-// Opposite of Root() API.
-func (store *Store) Release(transaction bool, stalenodes []Node, ts int64) {
-    store.wstore.release(stalenodes, ts)
+// Opposite of OpStart() API.
+func (store *Store) OpEnd(transaction bool, mv *MV, ts int64) {
+    minAccess := store.wstore.release(ts)
     if transaction {
+        store.wstore.commit(mv, minAccess, false)
         <-store.wstore.translock
     }
 }
 
-func (store *Store) SetRoot(root Node) {
-    store.wstore.setRoot(root)
+func (store *Store) currentRoot() int64 {
+    return atomic.LoadInt64(&store.wstore.head.root)
 }
 
 func (store *Store) FetchNode(fpos int64) Node {
@@ -132,10 +137,26 @@ func (store *Store) FetchNode(fpos int64) Node {
         node = &kn
     } else {
         node = &inode{knode:kn}
-        store.wstore.cache(node)
     }
+    store.wstore.cache(node)
     store.loadCounts += 1
     return node
+}
+
+func (store *Store) FetchMVCCNode(fpos int64) Node {
+    var node Node
+
+    // Sanity check
+    fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
+    if fpos < fpos_firstblock || (fpos - fpos_firstblock) % blocksize != 0 {
+        panic("Invalid fpos to fetch")
+    }
+
+    // Try to fetch from commit cache
+    if node = store.wstore.ccacheLookup(fpos); node != nil {
+        return node
+    }
+    return store.FetchNode(fpos)
 }
 
 
@@ -146,6 +167,10 @@ func (store *Store) maxKeys() int {
 }
 
 func calculateMaxKeys(blocksize int64) int64 {
+    return (blocksize - 16) / 24
+}
+
+func calculateMaxKeys_gob(blocksize int64) int64 {
     max64 := int64(9223372036854775807-1)
     start := int64(float64(blocksize-14) / (10.1875*3))
     inc := int64(2)
@@ -198,4 +223,12 @@ func is_configSane(store *Store) bool {
         return false
     }
     return true
+}
+
+func BlockCalculate(store *Store) {
+    fi, _ := store.idxRfd.Stat()
+    size := fi.Size()
+    fmt.Println("size:", size)
+    count := (size - 1024 - (store.Flistsize*2)) / store.Blocksize
+    fmt.Println("diskblocks:", count)
 }

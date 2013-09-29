@@ -1,9 +1,15 @@
 package btree
 
-func (kn *knode) remove(key Key) (Node, bool, []Node) {
-    index, equal := kn.searchEqual(key)
-    if equal == false {
-        return nil, false, []Node{}
+import (
+    "fmt"
+)
+
+var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+
+func (kn *knode) remove(key Key, mv *MV) (Node, bool) {
+    index, kfpos, dfpos := kn.searchGE(key, true)
+    if (kfpos < 0) && (dfpos < 0) {
+        return kn, false
     }
 
     copy(kn.ks[index:], kn.ks[index+1:])
@@ -16,47 +22,46 @@ func (kn *knode) remove(key Key) (Node, bool, []Node) {
     kn.vs = kn.vs[:len(kn.vs)-1]
 
     if kn.size >= kn.store.RebalanceThrs {
-        return kn, false, []Node{}
+        return kn, false
     }
-    return kn, true, []Node{}
+    return kn, true
 }
 
-func (in *inode) remove(key Key) (Node, bool, []Node) {
-    index, _ := in.searchEqual(key)
+func (in *inode) remove(key Key, mv *MV) (Node, bool) {
+    index, _, _ := in.searchGE(key, true)
 
     // Copy on write
-    stalechild := in.store.FetchNode(in.vs[index])
+    stalechild := in.store.FetchMVCCNode(in.vs[index])
     child := stalechild.copyOnWrite()
+    mv.stales = append(mv.stales, stalechild)
+    mv.commits = append(mv.commits, child)
 
     // Recursive remove
-    child, rebalnc, stalenodes := child.remove(key)
-    stalenodes = append(stalenodes, stalechild)
+    child, rebalnc := child.remove(key, mv)
     in.vs[index] = child.getKnode().fpos
 
     if rebalnc == false {
-        return in, false, stalenodes
+        return in, false
     }
 
     // Try to rebalance from left, if there is a left node available.
     if rebalnc && (index > 0) {
-        left := in.store.FetchNode(in.vs[index-1])
-        _, stalerebalnc := rebalanceLeft(in, index, child, left)
-        stalenodes = append(stalenodes, stalerebalnc...)
+        left := in.store.FetchMVCCNode(in.vs[index-1])
+        rebalanceLeft(in, index, child, left, mv)
     }
     // Try to rebalance from right, if there is a right node available.
     if rebalnc && (index+1 <= in.size) {
-        right := in.store.FetchNode(in.vs[index+1])
-        _, stalerebalnc := rebalanceRight(in, index, child, right)
-        stalenodes = append(stalenodes, stalerebalnc...)
+        right := in.store.FetchMVCCNode(in.vs[index+1])
+        rebalanceRight(in, index, child, right, mv)
     }
 
     if in.size >= in.store.RebalanceThrs {
-        return in, false, stalenodes
+        return in, false
     }
-    return in, true, stalenodes
+    return in, true
 }
 
-func rebalanceLeft(in *inode, index int, child Node, left Node) (Node, []Node) {
+func rebalanceLeft(in *inode, index int, child Node, left Node, mv *MV) Node {
     count := child.balance(left)
     mk, md :=  in.ks[index-1], in.ds[index-1]
     if count == 0 { // We can merge with left child
@@ -70,23 +75,27 @@ func rebalanceLeft(in *inode, index int, child Node, left Node) (Node, []Node) {
         // left-child has to go
         copy(in.vs[index-1:], in.vs[index:])
         in.vs = in.vs[:len(in.ks)]
-        return in, stalenodes
+        mv.stales = append(mv.stales, stalenodes...)
+        return in
     } else {
-        staleleft := left.copyOnWrite()
+        mv.stales = append(mv.stales, left)
+        left := left.copyOnWrite()
+        mv.commits = append(mv.commits, left)
         in.ks[index-1], in.ds[index-1] = left.rotateRight(child, count, mk, md)
         in.vs[index-1] = left.getKnode().fpos
-        return in, []Node{staleleft}
+        return in
     }
 }
 
-func rebalanceRight(in *inode, index int, child Node, right Node) (Node, []Node) {
+func rebalanceRight(in *inode, index int, child Node, right Node, mv *MV) Node {
     count := child.balance(right)
     mk, md := in.ks[index], in.ds[index]
     if count == 0 {
         child, stalenodes := child.mergeLeft(right, mk, md)
+        mv.stales = append(mv.stales, stalenodes...)
         if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
-            stalenodes = append(stalenodes, in)
-            return child, stalenodes
+            mv.stales = append(mv.stales, in)
+            return child
         } else {
             // The median has to go
             copy(in.ks[index:], in.ks[index+1:])
@@ -97,13 +106,15 @@ func rebalanceRight(in *inode, index int, child Node, right Node) (Node, []Node)
             // right child has to go
             copy(in.vs[index+1:], in.vs[index+2:])
             in.vs = in.vs[:len(in.ks)]
-            return in, stalenodes
+            return in
         }
     } else {
-        staleright := right.copyOnWrite()
+        mv.stales = append(mv.stales, right)
+        right := right.copyOnWrite()
+        mv.commits = append(mv.commits, right)
         in.ks[index], in.ds[index] = child.rotateLeft(right, count, mk, md)
         in.vs[index+1] = right.getKnode().fpos
-        return in, []Node{staleright}
+        return in
     }
 }
 

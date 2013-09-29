@@ -34,6 +34,15 @@ func newFreeList(wstore *WStore) *FreeList {
     return &fl
 }
 
+// Clone `fl` to `newfl` with new array of offsets.
+func (fl *FreeList) clone() *FreeList{
+    newfl := newFreeList(fl.wstore)
+    newfl.dirty = fl.dirty
+    newfl.offsets = newfl.offsets[:len(fl.offsets)]
+    copy(newfl.offsets, fl.offsets)
+    return newfl
+}
+
 // Fetch list of free blocks from index file. 
 func (fl *FreeList) fetch(crc uint32) bool {
     var fpos int64
@@ -78,13 +87,16 @@ func (fl *FreeList) fetch(crc uint32) bool {
 // Add a list of offsets to free blocks. By adding `offsets` into the
 // freelist, length of freelist must not exceed `maxFreeBlocks()+1`.
 func (fl *FreeList) add(offsets []int64) *FreeList {
-    ln := len(fl.offsets)
-    if (ln + len(offsets)) <= fl.wstore.maxFreeBlocks() {
+    if len(offsets) > 0 {
+        max := fl.wstore.maxFreeBlocks()
+        ln := len(fl.offsets)
         fl.offsets = append(fl.offsets[:ln-1], offsets...)
+        if (ln + len(offsets)) > max {
+            fl.wstore.garbageBlocks += int64(max - ln - len(offsets))
+            fl.offsets = fl.offsets[:max-1]
+        }
         fl.offsets = append(fl.offsets, 0) // Zero terminator
         fl.dirty = true
-    } else {
-        panic("Cannot add more than maxFreeBlocks()")
     }
     return fl
 }
@@ -120,10 +132,6 @@ func (fl *FreeList) flush() uint32 {
 
     crc := crc32.Checksum(bytebuf, crctab)
     return crc
-}
-
-func (fl *FreeList) isCritical() bool {
-    return len(fl.offsets) < (2*fl.wstore.Maxlevel)
 }
 
 func (fl *FreeList) limit() int {

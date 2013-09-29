@@ -6,6 +6,7 @@ import (
     "os"
     "path/filepath"
     "sync"
+    "unsafe"
     "syscall"
 )
 
@@ -16,6 +17,13 @@ var _ = fmt.Sprintln("keep 'fmt' import during debugging", syscall.F_NOCACHE);
 // wstore.
 var writeStores = make(map[string]*WStore)
 var wmu sync.Mutex // Protected access to `writeStores`
+
+type MV struct {
+    timestamp int64
+    root int64
+    commits []Node
+    stales []Node
+}
 
 // structure that handles write.
 type WStore struct {
@@ -29,23 +37,26 @@ type WStore struct {
     freelist *FreeList    // list of free blocks.
     fpos_firstblock int64 // file offset for btree block.
     MVCC                  // MVCC concurrency control go-routine
+    IO                    // IO flusher
+    KVCache               // kv-cache
     WStoreStats
 }
 
 // Statistical counts
 type WStoreStats struct {
     cacheHits int64
-    cacheEvicts int64
+    commitHits int64
     popCounts int64
     maxlenAccessQ int64
-    maxlenCommitQ int64
-    maxlenReclaimQ int64
-    maxlenNodecache int64
+    maxlenNC int64
+    maxlenLC int64
     appendCounts int64
     flushHeads int64
     flushFreelists int64
     dumpCounts int64
-    reclaimedFpos int64
+    countAppendKV int64
+    countReadKV int64
+    garbageBlocks int64
 }
 
 // Main API to get or instantiate a write-store. If write-store for this index
@@ -69,25 +80,21 @@ func OpenWStore(conf Config) *WStore {
         wstore.head.fetch()
         wstore.freelist.fetch(wstore.head.crc)
         writeStores[idxfile] = wstore
-        go doMVCC(wstore)
     }
+    go doMVCC(wstore)
+    go doKV(wstore)
     return wstore
 }
 
 // Close write-Store
 func (wstore *WStore) CloseWStore() bool {
     if derefWSTore(wstore) && (wstore.refcount == 0) {
-        // Persist
-        wstore.reclaimBlocks(true)
-        wstore.flushCommit(true, 0) // force flush !
-        crc := wstore.freelist.flush() // then this
-        wstore.head.flush(crc) // finally this
+        wstore.commit(nil, 0, true)
+        wstore.closeChannels()
         // Cleanup
         wstore.kvWfd.Close();  wstore.kvWfd = nil
         wstore.idxWfd.Close(); wstore.idxWfd = nil
         wstore.judgementDay()
-        close(wstore.req); wstore.req = nil
-        close(wstore.res); wstore.res = nil
         close(wstore.translock); wstore.translock = nil
         return true
     }
@@ -126,7 +133,6 @@ func getWStore(conf Config) *WStore {
         wstore.head.fetch()
         wstore.freelist.fetch(wstore.head.crc)
         writeStores[idxfile] = wstore
-        go doMVCC(wstore)
     }
     return wstore
 }
@@ -150,14 +156,23 @@ func newWStore(conf Config) *WStore {
         kvWfd: openWfd(conf.Kvfile, kvmode, 0660),
         fpos_firstblock: conf.Sectorsize*2 + conf.Flistsize*2,
         MVCC: MVCC{
-            nodecache: make(map[int64]Node),
+            nodecache: unsafe.Pointer(newNodeCache()),
+            leafcache: unsafe.Pointer(newNodeCache()),
             accessQ: make([]int64, 0),
-            reclaimQ: make([]ReclaimData, 0),
-            commitQ: make(map[int64]Node),
-            // Serialization.
+            // Channel for MVCC concurrency control.
             req: make(chan []interface{}),
             res: make(chan []interface{}),
             translock: make(chan bool, 1),
+        },
+        IO: IO{
+            mvQ: make([]*MV, 0, conf.DrainRate),
+            commitQ: map[int64]Node{},
+        },
+        KVCache: KVCache {
+            kvCache: make(map[int64][]byte),
+            // Channel for MVCC concurrency control.
+            kvreq: make(chan []interface{}),
+            kvres: make(chan []interface{}),
         },
     }
     return wstore
@@ -166,7 +181,7 @@ func newWStore(conf Config) *WStore {
 // Lock and dereference the wstore before closing it.
 func derefWSTore(wstore *WStore) bool {
     wmu.Lock()
-    defer wmu.Unlock() 
+    defer wmu.Unlock()
     idxfile, _ := filepath.Abs(wstore.Idxfile)
     if writeStores[idxfile] != nil {
         wstore.refcount -= 1 // decrement reference count and check
@@ -199,15 +214,10 @@ func createWStore(conf Config) {
     wstore := newWStore(conf)
     wstore.head = newHead(wstore)
     wstore.freelist = newFreeList(wstore)
-    wstore.head.fetch() // Nothing important
-    wstore.freelist.fetch(wstore.head.crc) // load `offsets`
-    wstore.head.sectorsize = wstore.Sectorsize
-    wstore.head.flistsize = wstore.Flistsize
-    wstore.head.blocksize = wstore.Blocksize
-    wstore.head.maxkeys = calculateMaxKeys(wstore.Blocksize)
 
     // Setup the head and freelist on disk.
-    wstore.appendBlocks(wstore.fpos_firstblock, wstore.freelist.limit())
+    offsets := wstore.appendBlocks(wstore.fpos_firstblock, wstore.appendCount())
+    wstore.freelist.add(offsets)
 
     // Root : Fetch a new node from freelist for root and setup.
     fpos := wstore.freelist.pop()
@@ -222,22 +232,20 @@ func createWStore(conf Config) {
     wstore.idxWfd.Close(); wstore.idxWfd = nil
     close(wstore.req); wstore.req = nil
     close(wstore.res); wstore.res = nil
+    close(wstore.kvreq); wstore.kvreq = nil
+    close(wstore.kvres); wstore.kvres = nil
     close(wstore.translock); wstore.translock = nil
 }
 
 // appendBlocks will add new free blocks at the end of the index-file. New
 // offsets will be added to the in-memory copy of the freelist and the same
 // slice of offsets will be returned back to the caller.
-// 
+//
 // If `fpos` is passed as 0, then free blocks will be create starting from
 // SEEK_END, otherwise it will be created from specified `fpos`.
-//
-// If `limit` > 0, will limit the number of blocks appended.
-func (wstore *WStore) appendBlocks(fpos int64, limit int) []int64 {
+func (wstore *WStore) appendBlocks(fpos int64, count int) []int64 {
     var err error
-    max := wstore.maxFreeBlocks()
-    count := max - len(wstore.freelist.offsets) - wstore.Maxlevel
-    offsets := make([]int64, 0, max)
+    offsets := make([]int64, 0, wstore.maxFreeBlocks())
     if count > 0 {
         data := make([]byte, wstore.Blocksize) // Empty block
         wfd := wstore.idxWfd
@@ -252,9 +260,6 @@ func (wstore *WStore) appendBlocks(fpos int64, limit int) []int64 {
             }
         }
         // Actuall append
-        if (limit > 0) && (count > limit) {
-            count = limit - len(wstore.freelist.offsets) - wstore.Maxlevel
-        }
         for i := 0; i < count; i++ {
             if n, err := wfd.Write(data); err == nil {
                 offsets = append(offsets, fpos)
@@ -263,20 +268,32 @@ func (wstore *WStore) appendBlocks(fpos int64, limit int) []int64 {
                 panic(err.Error())
             }
         }
-        wstore.freelist.add(offsets)
         wstore.appendCounts += 1 // stats
     }
     return offsets
 }
 
 func (wstore *WStore) flushNode(node Node) {
+    var data []byte
     kn := node.getKnode()
-    if data := kn.gobEncode(); len(data) <= int(wstore.Blocksize) {
+    data = kn.gobEncode()
+    if len(data) <= int(wstore.Blocksize) {
         wstore.idxWfd.WriteAt(data, kn.fpos)
         wstore.dumpCounts += 1 // stats
     } else {
         panic("flushNode, btree block greater than store.blocksize")
     }
+}
+
+func newNodeCache() *map[int64]Node {
+    m := make(map[int64]Node)
+    return &m
+}
+
+func (wstore *WStore) appendCount() int {
+    count := int(float32(wstore.maxFreeBlocks()) * wstore.AppendRatio)
+    count -= wstore.Maxlevel
+    return count
 }
 
 // Get the maximum number of free blocks that can be monitored by the
@@ -286,15 +303,10 @@ func (wstore *WStore) maxFreeBlocks() int {
 }
 
 func (wstore *WStore) judgementDay() {
-    if len(wstore.commitQ) > 0 {
-        panic("there is still nodes to be commited")
-    }
-    if len(wstore.reclaimQ) > 0 {
-        panic("there are still blocks to be reclaimed")
-    }
     if len(wstore.accessQ) > 0 {
         panic("still a store access is in-progress")
     }
-    wstore.head = nil; wstore.freelist = nil; wstore.nodecache = nil;
-    wstore.accessQ = nil; wstore.reclaimQ =nil; wstore.commitQ =nil;
+    wstore.head = nil; wstore.freelist = nil;
+    wstore.nodecache = nil; wstore.leafcache = nil;
+    wstore.commitQ = nil; wstore.accessQ = nil;
 }

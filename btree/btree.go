@@ -30,6 +30,10 @@ type Config struct {
 
     AppendRatio float32
 
+    DrainRate int
+
+    MaxLeafCache int
+
     // async
     Sync bool
 
@@ -77,7 +81,9 @@ type Indexer interface {
     // Return a channel that will transmit value bytes
     ValueSet() <-chan []byte
 
-    // Return a channel that will transmit all values associated with `key`
+    // Return a channel that will transmit all values associated with `key`,
+    // make sure the `docid` is set to minimum value to lookup all values
+    // greater thatn `key` && `docid`
     Lookup(Key) (chan []byte, error)
 
     //Range(Key, Key) (chan []byte, error)
@@ -109,12 +115,7 @@ type Key interface {
 
     // Check this key with key slice argument. Return true if this key is less
     // than argument bytes.
-    Less([]byte, []byte) bool
-
-    // Check this key with key slice argument. Return true if this key is
-    // less than or equal to argument bytes. Note that if keys are equal,
-    // then they are sorted by docid.
-    LessEq([]byte, []byte) bool
+    CompareLess(*Store, int64, int64, bool) (int, int64, int64)
 
     // Check whether both key and document id compares equal.
     Equal([]byte, []byte) (bool, bool)
@@ -138,9 +139,8 @@ func (bt *BTree) Close() {
 
 // Insert key and value pair
 func (bt *BTree) Insert(k Key, v Value) bool {
-    root, staleroot, timestamp := bt.store.Root(true) // root with transaction
-    root, spawn, mk, md, stalenodes := root.insert(k, v)
-    stalenodes = append(stalenodes, staleroot)
+    root, mv, timestamp := bt.store.OpStart(true) // root with transaction
+    spawn, mk, md := root.insert(k, v, mv)
     if spawn != nil {
         in := (&inode{}).newNode(bt.store)
 
@@ -152,51 +152,52 @@ func (bt *BTree) Insert(k Key, v Value) bool {
         in.vs[1] = spawn.getKnode().fpos
         in.vs = in.vs[:2]
 
+        mv.commits = append(mv.commits, in)
         root = in
     }
-    bt.store.SetRoot(root) // First this
-    bt.store.Release(true, stalenodes, timestamp) // Then this
+    mv.root = root.getKnode().fpos
+    bt.store.OpEnd(true, mv, timestamp) // Then this
     return true
 }
 
 func (bt *BTree) Count() int64 {
-    root, _, timestamp := bt.store.Root(false)
+    root, mv, timestamp := bt.store.OpStart(false)
     count := root.count()
-    bt.store.Release(false, nil, timestamp)
+    bt.store.OpEnd(false, mv, timestamp)
     return count
 }
 
 func (bt *BTree) Front() ([]byte, []byte, []byte) {
-    root, _, timestamp := bt.store.Root(false)
+    root, mv, timestamp := bt.store.OpStart(false)
     b, c, d := root.front()
-    bt.store.Release(false, nil, timestamp)
+    bt.store.OpEnd(false, mv, timestamp)
     return b, c, d
 }
 
 func (bt *BTree) Contains(key Key) bool {
-    root, _, timestamp := bt.store.Root(false)
+    root, mv, timestamp := bt.store.OpStart(false)
     st := root.contains(key)
-    bt.store.Release(false, nil, timestamp)
+    bt.store.OpEnd(false, mv, timestamp)
     return st
 }
 
 func (bt *BTree) Equals(key Key) bool {
-    root, _, timestamp := bt.store.Root(false)
+    root, mv, timestamp := bt.store.OpStart(false)
     st := root.equals(key)
-    bt.store.Release(false, nil, timestamp)
+    bt.store.OpEnd(false, mv, timestamp)
     return st
 }
 
 func (bt *BTree) FullSet() <-chan []byte {
     c := make(chan []byte)
     go func() {
-        root, _, timestamp := bt.store.Root(false)
+        root, mv, timestamp := bt.store.OpStart(false)
         root.traverse(func(kpos int64, dpos int64, vpos int64) {
             c <- bt.store.fetchKey(kpos)
             c <- bt.store.fetchDocid(dpos)
             c <- bt.store.fetchValue(vpos)
         })
-        bt.store.Release(false, nil, timestamp)
+        bt.store.OpEnd(false, mv, timestamp)
         close(c)
     } ()
     return c
@@ -205,11 +206,11 @@ func (bt *BTree) FullSet() <-chan []byte {
 func (bt *BTree) KeySet() <-chan []byte {
     c := make(chan []byte)
     go func() {
-        root, _, timestamp := bt.store.Root(false)
+        root, mv, timestamp := bt.store.OpStart(false)
         root.traverse(func(kpos int64, dpos int64, vpos int64) {
             c <- bt.store.fetchKey(kpos)
         })
-        bt.store.Release(false, nil, timestamp)
+        bt.store.OpEnd(false, mv, timestamp)
         close(c)
     }()
     return c
@@ -218,11 +219,11 @@ func (bt *BTree) KeySet() <-chan []byte {
 func (bt *BTree) DocidSet() <-chan []byte {
     c := make(chan []byte)
     go func() {
-        root, _, timestamp := bt.store.Root(false)
+        root, mv, timestamp := bt.store.OpStart(false)
         root.traverse(func(kpos int64, dpos int64, vpos int64) {
             c <- bt.store.fetchDocid(dpos)
         })
-        bt.store.Release(false, nil, timestamp)
+        bt.store.OpEnd(false, mv, timestamp)
         close(c)
     }()
     return c
@@ -231,11 +232,11 @@ func (bt *BTree) DocidSet() <-chan []byte {
 func (bt *BTree) ValueSet() <-chan []byte {
     c := make(chan []byte)
     go func() {
-        root, _, timestamp := bt.store.Root(false)
+        root, mv, timestamp := bt.store.OpStart(false)
         root.traverse(func(kpos int64, dpos int64, vpos int64) {
             c <- bt.store.fetchValue(vpos)
         })
-        bt.store.Release(false, nil, timestamp)
+        bt.store.OpEnd(false, mv, timestamp)
         close(c)
     }()
     return c
@@ -244,28 +245,31 @@ func (bt *BTree) ValueSet() <-chan []byte {
 func (bt *BTree) Lookup(key Key) chan []byte {
     c := make(chan []byte)
     go func () {
-        root, _, timestamp := bt.store.Root(false)
+        root, mv, timestamp := bt.store.OpStart(false)
         root.lookup(key, func(val []byte) {
             c <- val
         })
         close(c)
-        bt.store.Release(false, nil, timestamp)
+        bt.store.OpEnd(false, mv, timestamp)
     }()
     return c
 }
 
 func (bt *BTree) Remove(key Key) bool {
-    var stalenodes []Node
-    root, staleroot, timestamp := bt.store.Root(true) // root with transaction
+    root, mv, timestamp := bt.store.OpStart(true) // root with transaction
     if root.getKnode().size > 0 {
-        root, _, stalenodes = root.remove(key)
-        stalenodes = append(stalenodes, staleroot)
+        root, _ = root.remove(key, mv)
     } else {
         panic("Empty index")
     }
-    bt.store.SetRoot(root) // First this
-    bt.store.Release(true, stalenodes, timestamp) // Then this
+    mv.root = root.getKnode().fpos
+    bt.store.OpEnd(true, mv, timestamp) // Then this
     return true // FIXME: What is this ??
+}
+
+// Development method.
+func (bt *BTree) Drain() {
+    bt.store.wstore.commit(nil, 0, true)
 }
 
 func (bt *BTree) Show() {
@@ -273,41 +277,52 @@ func (bt *BTree) Show() {
         "flist:%v block:%v maxKeys:%v\n\n",
         bt.Flistsize, bt.Blocksize, bt.store.maxKeys(),
     )
-    root, _, timestamp := bt.store.Root(false)
+    root, mv, timestamp := bt.store.OpStart(false)
     root.show(0)
-    bt.store.Release(false, nil, timestamp)
+    bt.store.OpEnd(false, mv, timestamp)
 }
 
 func (bt *BTree) ShowKeys() {
-    root, _, timestamp := bt.store.Root(false)
+    root, mv, timestamp := bt.store.OpStart(false)
     root.showKeys(0)
-    bt.store.Release(false, nil, timestamp)
+    bt.store.OpEnd(false, mv, timestamp)
 }
 
 func (bt *BTree) Stats() {
     store := bt.store
     wstore := store.wstore
     fmt.Printf(
-        "cacheHits: %v     cacheEvicts: %v   popCounts: %v\n",
-        wstore.cacheHits, wstore.cacheEvicts, wstore.popCounts,
+        "cacheHits:    %10v    popCounts:  %10v    maxlenAccessQ: %10v\n",
+        wstore.cacheHits, wstore.popCounts, wstore.maxlenAccessQ,
     )
     fmt.Printf(
-        "appendCounts: %v  flushHeads: %v    flushFreelists: %v\n",
+        "commitHits:   %10v    maxlenNC:   %10v    maxlenLC:      %10v \n",
+        wstore.commitHits, wstore.maxlenNC, wstore.maxlenLC,
+    )
+    fmt.Printf(
+        "appendCounts: %10v    flushHeads: %10v    flushFreelists:%10v\n",
         wstore.appendCounts, wstore.flushHeads, wstore.flushFreelists,
     )
     fmt.Printf(
-        "maxlenCommitQ: %v maxlenAccessQ: %v maxlenReclaimQ:%v\n",
-        wstore.maxlenCommitQ, wstore.maxlenAccessQ, wstore.maxlenReclaimQ,
+        "dumpCounts: %v loadCounts: %v readKV: %v appendKV: %v\n",
+        wstore.dumpCounts, store.loadCounts, wstore.countReadKV,
+        wstore.countAppendKV,
     )
     fmt.Printf(
-        "maxlenNodecache: %v dumpCounts: %v reclaimedFpos: %v loadCounts: %v\n",
-        wstore.maxlenNodecache, wstore.dumpCounts, wstore.reclaimedFpos,
-        store.loadCounts,
+        "garbageBlocks: %v freelist: %v\n",
+        wstore.garbageBlocks, len(wstore.freelist.offsets),
     )
     // Level counts
-    root, _, timestamp := bt.store.Root(false)
+    acc, icount, kcount := bt.LevelCount()
+    fmt.Println("Levels :", acc, icount, kcount)
+}
+
+func (bt *BTree) LevelCount() ([]int64, int64, int64) {
+    root, mv, timestamp := bt.store.OpStart(false)
     acc := make([]int64, 0, 16)
     acc, icount, kcount := root.levelCount(0, acc, 0, 0)
-    fmt.Println("Levels :", acc, icount, kcount)
-    bt.store.Release(false, nil, timestamp)
+    ln := int64(len(bt.store.wstore.freelist.offsets))
+    fmt.Println("Blocks: ", icount + kcount + ln)
+    bt.store.OpEnd(false, mv, timestamp)
+    return acc, icount, kcount
 }

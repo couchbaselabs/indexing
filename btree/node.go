@@ -19,7 +19,6 @@ type knode struct { // keynode
 // in-memory structure for intermediate block.
 type inode struct { // intermediate node
     knode
-    dirtychild uint64   // number of dirty children under this node.
 }
 
 // Node interface that is implemented by both `knode` and `inode` structure.
@@ -28,7 +27,7 @@ type Node interface {
     // as necessary.  The first return value specifies if the value was
     // actually added (i.e. if it wasn't already there).  If a new node is 
     // created it is returned along with a separator value.
-    insert(Key, Value) (Node, Node, int64, int64, []Node)
+    insert(Key, Value, *MV) (Node, int64, int64)
 
     // Return number of entries on all the leaf nodes from this Node.
     count() int64
@@ -54,7 +53,7 @@ type Node interface {
     //  - Node
     //  - whether to rebalance or not.
     //  - slice of stalenodes
-    remove(Key) (Node, bool, []Node)
+    remove(Key, *MV) (Node, bool)
 
     //---- Support methods.
     isLeaf() bool // Return whether node is a leaf node or not.
@@ -116,65 +115,39 @@ func (in *inode) listOffsets() []int64 {
 // Returns,
 //  - index of the smallest value that is not less than `key`
 //  - whether or not it equals `key`
+//  - whether or not it equals `docid`
 // If there are no elements greater than or equal to `key` then it returns
 // (len(node.key), false)
-func (kn *knode) searchGE(key Key) (int, bool, bool) {
-    ks, ds := kn.ks, kn.ds
+func (kn *knode) searchGE(key Key, chkdocid bool) (int, int64, int64) {
+    var kfpos, dfpos int64
+    var cmp int
+    ks, ds, store := kn.ks, kn.ds, kn.store
     if kn.size == 0 {
-        return 0, false, false
+        return 0, -1, -1
     }
 
     low, high := 0, kn.size
     for (high-low) > 1 {
         mid := (high+low) / 2
-        keyb := kn.store.fetchKey(ks[mid])
-        docb := kn.store.fetchKey(ds[mid])
-        if key.Less(keyb, docb) {
+        cmp, kfpos, dfpos = key.CompareLess(store, ks[mid], ds[mid], chkdocid)
+        if cmp < 0 {
             high = mid
         } else {
             low = mid
         }
     }
 
-    keyb := kn.store.fetchKey(ks[low])
-    docb := kn.store.fetchKey(ds[low])
-    if key.LessEq(keyb, docb) {
-        keyeq, doceq := key.Equal(keyb, docb)
-        return low, keyeq, doceq
-    }
-    return high, false, false
-}
-
-// Returns,
-//  - index of the smallest value that is equal to `key`.
-//  - whether or not it equals `key` and doc-id
-// If there are no elements that matches `key`, returns (0, false)
-func (kn *knode) searchEqual(key Key) (int, bool) {
-    ks, ds := kn.ks, kn.ds
-    if kn.size == 0 {
-        return 0, false
-    }
-
-    low, high, max := 0, kn.size-1, kn.size
-    for high-low > 1 {
-        mid := (high+low) / 2
-        keyb := kn.store.fetchKey(ks[mid])
-        docb := kn.store.fetchKey(ds[mid])
-        if key.Less(keyb, docb) {
-            high = mid
-        } else {
-            low = mid
+    cmp, kfpos, dfpos = key.CompareLess(store, ks[low], ds[low], chkdocid)
+    if cmp <= 0 {
+        return low, kfpos, dfpos
+    } else if high < kn.size {
+        if kfpos < 0 {
+            _, kfpos, dfpos = key.CompareLess(store, ks[high], ds[high], chkdocid)
         }
+        return high, kfpos, dfpos
+    } else {
+        return high, -1, -1
     }
-
-    for i := low; i <= high; i++ {
-        keyb := kn.store.fetchKey(ks[i])
-        docb := kn.store.fetchDocid(ds[i])
-        if keyeq, doceq := key.Equal(keyb, docb); keyeq && doceq {
-            return i, true
-        }
-    }
-    return max, false
 }
 
 //---- count
@@ -207,13 +180,13 @@ func (in *inode) front() ([]byte, []byte, []byte) {
 
 //---- contains
 func (kn *knode) contains(key Key) bool {
-    _, keyeq, _ := kn.searchGE(key)
-    return keyeq
+    _, kfpos, _ := kn.searchGE(key, false)
+    return kfpos >= 0
 }
 
 func (in *inode) contains(key Key) bool {
-    idx, keyeq, _ := in.searchGE(key)
-    if keyeq {
+    idx, kfpos, _ := in.searchGE(key, false)
+    if kfpos >= 0 {
         return true
     }
     return in.store.FetchNode(in.vs[idx]).contains(key)
@@ -221,13 +194,13 @@ func (in *inode) contains(key Key) bool {
 
 //---- equals
 func (kn *knode) equals(key Key) bool {
-    _, keyeq, doceq := kn.searchGE(key)
-    return keyeq && doceq
+    _, kfpos, dfpos := kn.searchGE(key, true)
+    return (kfpos >= 0) && (dfpos >= 0)
 }
 
 func (in *inode) equals(key Key) bool {
-    idx, keyeq, doceq := in.searchGE(key)
-    if keyeq && doceq {
+    idx, kfpos, dfpos := in.searchGE(key, true)
+    if (kfpos >= 0) && (dfpos >= 0) {
         return true
     }
     return in.store.FetchNode(in.vs[idx]).equals(key)
@@ -248,7 +221,7 @@ func (in *inode) traverse(fun func(int64, int64, int64)) {
 
 //---- lookup
 func (kn *knode) lookup(key Key, emit Emitter) {
-    index, _, _ := kn.searchGE(key)
+    index, _, _ := kn.searchGE(key, true)
     for i := index; i < kn.size; i++ {
         keyb := kn.store.fetchKey(kn.ks[i])
         if keyeq, _ := key.Equal(keyb, nil); keyeq {
@@ -260,7 +233,7 @@ func (kn *knode) lookup(key Key, emit Emitter) {
 }
 
 func (in *inode) lookup(key Key, emit Emitter) {
-    index, _, _ := in.searchGE(key)
+    index, _, _ := in.searchGE(key, true)
     for i := index; i < in.size+1; i++ {
         in.store.FetchNode(in.vs[i]).lookup(key, emit)
         if i < in.size {
@@ -296,7 +269,6 @@ func (in *inode) show(level int) {
         fmt.Printf("%v%vth key %v & %v\n", prefix, i, in.ks[i], in.ds[i])
         in.store.FetchNode(in.vs[i+1]).show(level+1)
     }
-    fmt.Printf("%vdirtychild %v\n", prefix, in.dirtychild)
 }
 
 func (kn *knode) showKeys(level int) {

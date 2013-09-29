@@ -13,8 +13,11 @@ package btree
 import (
     "encoding/binary"
     "os"
+    "fmt"
     "bytes"
 )
+
+var _ = fmt.Sprintln("keep 'fmt' import during debugging");
 
 // Structure to manage the head sector
 type Head struct {
@@ -26,7 +29,6 @@ type Head struct {
     blocksize int64  // btree block size in bytes.
     maxkeys int64    // Maximum number of keys that can be store in btree block.
     root int64       // file-offset into index file that has root block
-    rootN Node       // root Node.
     fpos_head1 int64 // file-offset into index file where 1st-head is
     fpos_head2 int64 // file-offset into index file where 2nd-head is
     crc uint32       // CRC value for head sector + freelist block
@@ -40,13 +42,22 @@ func newHead(wstore *WStore) *Head {
         sectorsize: wstore.Sectorsize,
         flistsize: wstore.Flistsize,
         blocksize: wstore.Blocksize,
-        // blocksize: calculateMaxKeys(wstore.Blocksize), Don't uncomment
+        maxkeys: calculateMaxKeys(wstore.Blocksize),
         dirty: false,
         root: 0,
         fpos_head1: 0,
         fpos_head2: wstore.Sectorsize,
     }
     return &hd
+}
+
+// Clone `hd` to `newhd`.
+func (hd *Head) clone() *Head{
+    newhd := newHead(hd.wstore)
+    newhd.pick = hd.pick
+    newhd.dirty = hd.dirty
+    newhd.root = hd.root
+    return newhd
 }
 
 // Fetch head sector from index file, read root block's file position and

@@ -23,6 +23,8 @@ var testconf1 = Config{
     Maxlevel: 6,
     RebalanceThrs: 6,
     AppendRatio: 0.7,
+    DrainRate: 10,
+    MaxLeafCache: 1000,
     Sync: false,
     Nocache: false,
 }
@@ -47,24 +49,27 @@ func (tk *TestKey) Control() uint32 {
     return 0
 }
 
-func (tk *TestKey) Less(otherk []byte, otherd []byte) bool {
-    kcomp := bytes.Compare(tk.Bytes(), otherk)
-    if kcomp < 0 {
-        return true
-    } else if kcomp == 0 && bytes.Compare(tk.Docid(), otherd) < 0 {
-        return true
-    }
-    return false
-}
+func (tk *TestKey) CompareLess(s *Store, kfp, dfp int64, isD bool) (int, int64, int64) {
+    var otherk, otherd []byte
+    var cmp int
 
-func (tk *TestKey) LessEq(otherk []byte, otherd []byte) bool {
-    kcomp := bytes.Compare(tk.Bytes(), otherk)
-    if kcomp < 0 {
-        return true
-    } else if kcomp == 0 && bytes.Compare(tk.Docid(), otherd) < 1 {
-        return true
+    otherk = s.fetchKey(kfp)
+    // Compare
+    if cmp = bytes.Compare(tk.Bytes(), otherk); cmp == 0 && isD {
+        if isD {
+            otherd = s.fetchKey(dfp)
+        }
+        cmp = bytes.Compare(tk.Docid(), otherd)
+        if cmp == 0 {
+            return cmp, kfp, dfp
+        } else {
+            return cmp, kfp, -1
+        }
+    } else if cmp == 0 {
+        return cmp, kfp, -1
+    } else {
+        return cmp, -1, -1
     }
-    return false
 }
 
 func (tk *TestKey) Equal(otherk []byte, otherd []byte) (bool, bool) {

@@ -18,11 +18,11 @@ var _ = fmt.Sprintf("keep 'fmt' import during debugging");
 
 // Append/Fetch value as either byte-slice or string
 func (store *Store) fetchValue(fpos int64) []byte {
-    return readKV(store.kvRfd, fpos)
+    return store.wstore.readKV(store.kvRfd, fpos)
 }
 
 func (store *Store) fetchValueS(fpos int64) string {
-    return string(readKV(store.kvRfd, fpos))
+    return string(store.wstore.readKV(store.kvRfd, fpos))
 }
 
 func (store *Store) appendValue(val []byte) int64 {
@@ -35,11 +35,11 @@ func (store *Store) appendValueS(val string) int64 {
 
 // Append/Fetch key as either byte-slice or string
 func (store *Store) fetchKey(fpos int64) []byte {
-    return readKV(store.kvRfd, fpos)
+    return store.wstore.readKV(store.kvRfd, fpos)
 }
 
 func (store *Store) fetchKeyS(fpos int64) string {
-    return string(readKV(store.kvRfd, fpos))
+    return string(store.wstore.readKV(store.kvRfd, fpos))
 }
 
 func (store *Store) appendKey(key []byte) int64 {
@@ -52,11 +52,11 @@ func (store *Store) appendKeyS(key string) int64 {
 
 // Append/Fetch Docid as either byte-slice or string
 func (store *Store) fetchDocid(fpos int64) []byte {
-    return readKV(store.kvRfd, fpos)
+    return store.wstore.readKV(store.kvRfd, fpos)
 }
 
 func (store *Store) fetchDocidS(fpos int64) string {
-    return string(readKV(store.kvRfd, fpos))
+    return string(store.wstore.readKV(store.kvRfd, fpos))
 }
 
 func (store *Store) appendDocid(docid []byte) int64 {
@@ -68,7 +68,7 @@ func (store *Store) appendDocidS(docid string) int64 {
 }
 
 // Read bytes from `kvStore.rfd` at `fpos`
-func readKV(rfd *os.File, fpos int64) []byte {
+func (wstore *WStore) readKV(rfd *os.File, fpos int64) []byte {
     var size int32
     if _, err := rfd.Seek(fpos, os.SEEK_SET); err != nil {
         panic(err.Error())
@@ -78,6 +78,7 @@ func readKV(rfd *os.File, fpos int64) []byte {
     if _, err := rfd.Read(b); err != nil {
         panic(err.Error())
     }
+    wstore.countReadKV += 1
     return b
 }
 
@@ -88,5 +89,6 @@ func (wstore *WStore) appendKV(val []byte) int64 {
     if _, err := wfd.Write(val); err != nil {
         panic(err.Error())
     }
+    wstore.countAppendKV += 1
     return fpos
 }

@@ -28,7 +28,8 @@ func main() {
     fmt.Printf("CRC        : %v\n", crc)
 
     rfd.Seek(sectorsize*2, os.SEEK_SET)
-    fmt.Println(freefpos(rfd, flistsize))
+    offsets := freefpos(rfd, flistsize)
+    fmt.Println(len(offsets), offsets)
 }
 
 func readHead(rfd *os.File) (int64, int64, int64, int64, int64, int64, uint32) {

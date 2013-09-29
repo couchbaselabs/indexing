@@ -6,13 +6,13 @@ import (
 
 var _ = fmt.Sprintf("keep 'fmt' import during debugging");
 
-func (kn *knode) insert(key Key, v Value) (Node, Node, int64, int64, []Node) {
-    index, _, _ := kn.searchGE(key)
+func (kn *knode) insert(key Key, v Value, mv *MV) (Node,int64,int64) {
+    index, kfpos, dfpos := kn.searchGE(key, true)
     kn.ks = kn.ks[:len(kn.ks)+1]         // Make space in the key array
     kn.ds = kn.ds[:len(kn.ds)+1]         // Make space in the key array
     copy(kn.ks[index+1:], kn.ks[index:]) // Shift existing data out of the way
     copy(kn.ds[index+1:], kn.ds[index:]) // Shift existing data out of the way
-    kn.ks[index], kn.ds[index] = kn.keyOf(key)
+    kn.ks[index], kn.ds[index] = kn.keyOf(key, kfpos, dfpos)
 
     kn.vs = kn.vs[:len(kn.vs)+1]         // Make space in the value array
     copy(kn.vs[index+1:], kn.vs[index:]) // Shift existing data out of the way
@@ -20,24 +20,26 @@ func (kn *knode) insert(key Key, v Value) (Node, Node, int64, int64, []Node) {
 
     kn.size = len(kn.ks)
     if kn.size <= kn.store.maxKeys() {
-        return kn, nil, -1, -1, []Node{}
+        return nil, -1, -1
     }
     spawnKn, mkfpos, mdfpos := kn.split()
-    return kn, spawnKn, mkfpos, mdfpos, []Node{}
+    mv.commits = append(mv.commits, spawnKn)
+    return spawnKn, mkfpos, mdfpos
 }
 
-func (in *inode) insert(key Key, v Value) (Node, Node, int64, int64, []Node) {
-    index, _, _ := in.searchGE(key)
+func (in *inode) insert(key Key, v Value, mv *MV) (Node,int64,int64) {
+    index, _, _ := in.searchGE(key, true)
     // Copy on write
-    stalechild := in.store.FetchNode(in.vs[index])
+    stalechild := in.store.FetchMVCCNode(in.vs[index])
     child := stalechild.copyOnWrite()
+    mv.stales = append(mv.stales, stalechild)
+    mv.commits = append(mv.commits, child)
 
     // Recursive insert
-    child, spawn, mkfpos, mdfpos, stalenodes := child.insert(key, v)
-    stalenodes = append(stalenodes, stalechild)
+    spawn, mkfpos, mdfpos := child.insert(key, v, mv)
     in.vs[index] = child.getKnode().fpos
     if spawn == nil {
-        return in, nil, -1, -1, stalenodes
+        return nil, -1, -1
     }
 
     in.ks = in.ks[:len(in.ks)+1]           // Make space in the key array
@@ -53,12 +55,13 @@ func (in *inode) insert(key Key, v Value) (Node, Node, int64, int64, []Node) {
     in.size = len(in.ks)
     max := in.store.maxKeys()
     if in.size <= max {
-        return in, nil, -1, -1, stalenodes
+        return nil, -1, -1
     }
 
     // this node is full, so we have to split
     spawnIn, mkfpos, mdfpos  := in.split()
-    return in, spawnIn, mkfpos, mdfpos, stalenodes
+    mv.commits = append(mv.commits, spawnIn)
+    return spawnIn, mkfpos, mdfpos
 }
 
 // Split the leaf node into two.
@@ -71,7 +74,7 @@ func (in *inode) insert(key Key, v Value) (Node, Node, int64, int64, []Node) {
 // `kn` will contain the first half, while `newkn` will contain the second
 // half. Returns,
 //  - new leaf node,
-//  - key, that splits the two nodes with LessEq() method.
+//  - key, that splits the two nodes with CompareLess() method.
 func (kn *knode) split() (*knode, int64, int64) {
     // Get a free block
     max := kn.store.maxKeys() // always even
@@ -100,7 +103,7 @@ func (kn *knode) split() (*knode, int64, int64) {
 // `kn` will contain the first half, while `newkn` will contain the second
 // half. Returns,
 //  - new leaf node,
-//  - key, that splits the two nodes with LessEq() method.
+//  - key, that splits the two nodes with CompareLess() method.
 func (in *inode) split() (*inode, int64, int64) {
     // Get a free block
     max := in.store.maxKeys()  // always even
@@ -120,8 +123,12 @@ func (in *inode) split() (*inode, int64, int64) {
     return newin, mkfpos, mdfpos
 }
 
-func (kn *knode) keyOf(k Key) (int64, int64) {
-    return kn.store.appendKey(k.Bytes()), kn.store.appendDocid(k.Docid())
+func (kn *knode) keyOf(k Key, kfpos, dfpos int64) (int64, int64) {
+    if kfpos < 0 {
+        kfpos = kn.store.appendKey(k.Bytes())
+    }
+    dfpos = kn.store.appendDocid(k.Docid())
+    return kfpos, dfpos
 }
 
 func (kn *knode) valueOf(v Value) int64 {

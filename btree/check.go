@@ -20,7 +20,7 @@ func (store *Store) check() bool {
     }
 
     // Check freelist with btree.
-    root, _, _ := store.Root(false)
+    root, _, _ := store.OpStart(false)
     offs := root.listOffsets()
     qsortOffsets(offs)
     fulloffs := seq(wstore.fpos_firstblock, fi.Size(), int64(wstore.Blocksize))
