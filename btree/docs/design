@@ -75,7 +75,7 @@ Crash only design:
 
   Hence we forgo append-only design. By this what we mean is we will reuse
   stale nodes as much as possible and avoid appending new nodes. But there
-  will be corner cases, like when a large index suddenly go through a burst
+  will be corner cases, like when a large index suddenly go through a burst of
   entry removals, which can lead to un-recovered stale nodes.
 
 Document-id:
@@ -299,9 +299,9 @@ The ramifications of using multi-page blocks are,
   and another for leaf nodes.
 
 - MVCC for leaf nodes had to be done on multi-page blocks, not on individual
-  leaf nodes, this means that any changes to individual leaf nodes (individual
-  leaf nodes that map to single 4KB page) will lead to a copy-on-write of the
-  entire multi-page block.
+  leaf nodes, this means that any changes to individual leaf node (individual
+  leaf node that map to single 4KB page) will lead to a copy-on-write of the
+  entire multi-page block that contain the leaf node.
 
 - above point also means inserts and deletes can be a costly operation if they
   are spaced far away between leaf nodes.
@@ -311,7 +311,7 @@ Cache control
 -------------
 
                     Programming is an art of caching data
-                                                - some one
+                                                - unknown
 
 In our case MVCC and caching are the two central ideas that provide
 performance.
@@ -337,7 +337,7 @@ We have three different types of cache.
 - cache of keys and docids referred by intermediate nodes, there is no upper
   limit for this cache.
 
-Every time mutations happend, one or more of the above mentioned cache needs
+Every time mutations happen, one or more of the above mentioned cache needs
 to be mutated as well - to add or remove cache entries. And we have four
 different methods to do this,
 
@@ -346,8 +346,8 @@ different methods to do this,
   readers this will lead to lock contentions.
 
 - rwmutex, read-locks won't block other reads but write-locks will succeed
-  only when there are no outstanding locks and once a write-lock succeeds it
-  has got exclusive access to the data structure. This will reduce the lock
+  only when there are no outstanding read locks and once a write-lock succeeds
+  it has got exclusive access to the data structure. This will reduce the lock
   contention but can lead to write starvation.
 
 - copy-on-write, we can apply MVCC on cache data structures as well, but for
@@ -356,7 +356,7 @@ different methods to do this,
   doing copy-on-write.
 
 - ping-pong caches, there will always be two copies of the same cache,
-  where one will constantly be updated as and when new snapshots are created,
-  while the other will be used for read-only. When in-memory snapshot is
-  flushed to disk the copies are swapped, made consistent relative to each
-  other and the whole process is repeated again.
+  where one will constantly be updated, without any locks, as and when new
+  snapshots are created, while the other will be used for read-only. When
+  in-memory snapshot is flushed to disk the copies are swapped, made consistent
+  relative to each other and the whole process is repeated again.
