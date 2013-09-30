@@ -107,7 +107,7 @@ File storage:
 -------------
 
 Every index is maintained using a pair of files, 
-- one for storing keys and document ids, called `kdfile`.
+- one for storing keys and document-ids, called `kdfile`.
 - another for storing the btree structure, called `indexfile`.
 
 `kdfile`
@@ -120,7 +120,7 @@ Every index is maintained using a pair of files,
 
 - but we don't bother to remove keys and docids when an index entry is removed.
 
-- values are always stored in the leaf nodes, so they are not store in
+- values are always stored in the leaf nodes, so they are not appended into
   `kdfile`.
 
 - `kdfile` is primarily used while traversing intermediate nodes.
@@ -149,14 +149,14 @@ Our btree structures are similar to a general btree structure with couple of
 ceveats.
 
 - Like mentioned above we store docid as part of keys, so when we say
-  K1,K2,...,Kn we also mean docids that are stored along with it.
+  K1,K2,...,Kn we also mean docids that are stored and sorted along with it.
 
 - Intermediate nodes follow a data structure that is different from leaf
   nodes.
 
 Intermediate nodes,
 
-  - contains 64bit size that specifies number of keys stored in the node, that
+  - contains 64bit size that specify number of keys stored in the node, that
     is, if size is `N` then there are N keys, N docids and N+1 child nodes.
 
   - keys and docids are file position reference into the `kdfile`.
@@ -181,7 +181,8 @@ Leaf nodes,
   - a leaf node of 4KB size can typically store 32 entries, assuming
     key,value,docid can be compressed into 256 bytes.
 
-  - unlike btree we have to scan we cannot do binary search on leaf nodes.
+  - unlike btree we have to scan each entry in the leaf node, we cannot do
+    binary search due to variable length of each entry.
 
 Multi version concurrency control:
 ----------------------------------
@@ -195,13 +196,13 @@ and timestamping.
   is accomplished using a writer lock or a blocking channel.
 
 - every node fetch will go through a MVCC version of fetch, that will
-  first check wether the node is available in commitQ, more on commitQ later,
-  then in intermediate-cache and then in leaf-cache.
+  first check wether the node is available in commitQ,
+  then in intermediate-cache and then in leaf-cache; more on commitQ later.
 
-- once a node is fetched, a new copy is made, a new on disk stale block is
-  popped from the free-list and assigned to the new copy.
+- once a node is fetched, a new copy is made, a free block from disk is popped
+  from the free-list and assigned to the new copy.
 
-- once the write transaction is complete a MVCC insert or delete will
+- once the write transaction is complete an MVCC insert or delete will
   generate a collection of copied-and-modifed btree nodes and a collection
   of stalenodes.
 
@@ -227,8 +228,8 @@ and timestamping.
   is merged with read cache and in memory root reference is atomically updated.
 
 - accessQ is used to timestamp every access, both reads and writes into the
-  index tree are timestamped. It the case of read access, root reference must
-  be read only after acquiring a new access timestamp.
+  index tree are timestamped. In the case of read access, root reference must
+  be read only after acquiring a new access-timestamp.
 
 - since there could be outstanding reads that are still referring to some
   stalenodes, we use the accessQ to detect stale nodes with timestamp less
@@ -246,14 +247,15 @@ A note on stale block reclamation,
   acquiring root's timestamp.
 
   Meanwhile, reads will continue accessing the old snapshot acquiring its own
-  access timestamps.
+  access-timestamps.
 
   Reclaimation process of stalenodes will start when ever the minimum value of
-  access timestamp from accessQ is greater than root's timestamp. Reclamation
+  access-timestamp from accessQ is greater than root's timestamp. Reclamation
   process will loop through the mvQ collecting stale blocks whose timestamps
   are less than root's timestamp.
 
-  Reclaimed stale blocks are added back to the freelist.
+  Reclaimed stale blocks are added back to the freelist and persisted on disk
+  during the next flush.
 
 A note on crash only,
 
@@ -379,4 +381,5 @@ different methods to do this,
   where one will constantly be updated, without any locks, as and when new
   snapshots are created, while the other will be used for read-only. When
   in-memory snapshot is flushed to disk the copies are swapped, made consistent
-  relative to each other and the whole process is repeated again.
+  relative to each other and the whole process is repeated again. This method
+  will need 2x memory to cache `x` amount of data.
