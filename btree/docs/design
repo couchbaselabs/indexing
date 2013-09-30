@@ -227,7 +227,8 @@ and timestamping.
   is merged with read cache and in memory root reference is atomically updated.
 
 - accessQ is used to timestamp every access, both reads and writes into the
-  index tree are timestamped.
+  index tree are timestamped. It the case of read access, root reference must
+  be read only after acquiring a new access timestamp.
 
 - since there could be outstanding reads that are still referring to some
   stalenodes, we use the accessQ to detect stale nodes with timestamp less
@@ -235,13 +236,32 @@ and timestamping.
   stale nodes that are still referred by outstanding reads will be reclaimed
   during next flush.
 
+A note on stale block reclamation,
+
+  Flushing a disk snapshot will happen only after a write access is released.
+
+  Once the disk snapshot is flushed, in-memory root reference will be updated
+  and then a new timestamp will be acquired from MVCC controller and updated as
+  the latest root's timestamp. Root reference must be updated first before
+  acquiring root's timestamp.
+
+  Meanwhile, reads will continue accessing the old snapshot acquiring its own
+  access timestamps.
+
+  Reclaimation process of stalenodes will start when ever the minimum value of
+  access timestamp from accessQ is greater than root's timestamp. Reclamation
+  process will loop through the mvQ collecting stale blocks whose timestamps
+  are less than root's timestamp.
+
+  Reclaimed stale blocks are added back to the freelist.
+
 A note on crash only,
 
   In our case crash only is gauranteed only when intermediate nodes are
   flushed after leaf nodes, free-list is flushed into disk only after
   intermediate nodes and head block is flushed only after freelist is flushed.
 
-  When we say flush we mean that data is persisted on the disk. Since this is
+  When we say flush we mean that data is persisted on the disk. Since this
   can be un-reliable due to drive-type or its configuration, our crash only
   design is little flakey.
 
