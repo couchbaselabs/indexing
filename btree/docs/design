@@ -383,3 +383,8 @@ different methods to do this,
   in-memory snapshot is flushed to disk the copies are swapped, made consistent
   relative to each other and the whole process is repeated again. This method
   will need 2x memory to cache `x` amount of data.
+
+feature request:
+
+1. Do a segmented free-list to make sure that all stale nodes get to be 
+   tracked.

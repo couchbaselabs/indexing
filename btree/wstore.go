@@ -56,6 +56,10 @@ type WStoreStats struct {
     dumpCounts int64
     countAppendKV int64
     countReadKV int64
+    countMergeLeft int64
+    countMergeRight int64
+    countRotateLeft int64
+    countRotateRight int64
     garbageBlocks int64
 }
 

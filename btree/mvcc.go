@@ -124,7 +124,7 @@ func (wstore *WStore) closeChannels() {
     close(wstore.kvres); wstore.kvres = nil
 }
 
-func (wstore *WStore) cacheLookup(fpos int64) Node{
+func (wstore *WStore) cacheLookup(fpos int64) Node {
     var node Node
     nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.nodecache))
     if node = (*nc)[fpos]; node == nil {

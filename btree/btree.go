@@ -258,7 +258,7 @@ func (bt *BTree) Lookup(key Key) chan []byte {
 func (bt *BTree) Remove(key Key) bool {
     root, mv, timestamp := bt.store.OpStart(true) // root with transaction
     if root.getKnode().size > 0 {
-        root, _ = root.remove(key, mv)
+        root, _, _, _ = root.remove(key, mv)
     } else {
         panic("Empty index")
     }
@@ -279,6 +279,13 @@ func (bt *BTree) Show() {
     )
     root, mv, timestamp := bt.store.OpStart(false)
     root.show(0)
+    bt.store.OpEnd(false, mv, timestamp)
+}
+
+func (bt *BTree) Check() {
+    root, mv, timestamp := bt.store.OpStart(false)
+    root.check()
+    root.checkSeparator(make([]int64, 0))
     bt.store.OpEnd(false, mv, timestamp)
 }
 

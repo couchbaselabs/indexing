@@ -152,7 +152,7 @@ func (store *Store) FetchMVCCNode(fpos int64) Node {
         panic("Invalid fpos to fetch")
     }
 
-    // Try to fetch from commit cache
+    // Try to fetch from commitQ
     if node = store.wstore.ccacheLookup(fpos); node != nil {
         return node
     }

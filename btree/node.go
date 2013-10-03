@@ -2,6 +2,7 @@ package btree
 
 import (
     "fmt"
+    "bytes"
 )
 
 // in-memory structure for leaf-block.
@@ -53,7 +54,7 @@ type Node interface {
     //  - Node
     //  - whether to rebalance or not.
     //  - slice of stalenodes
-    remove(Key, *MV) (Node, bool)
+    remove(Key, *MV) (Node, bool, int64, int64)
 
     //---- Support methods.
     isLeaf() bool // Return whether node is a leaf node or not.
@@ -76,6 +77,8 @@ type Node interface {
     //---- Development methods.
     listOffsets() []int64 // Return the list of offsets from sub-tree.
     show(int) // Render this block on stdout and recursively call child blocks
+    check() // Check nodes for debugging
+    checkSeparator([]int64) []int64 // Check tree of nodes, its separator keys
     showKeys(int) // Render keys at each level
     // Count cummulative entries at each level
     levelCount(int, []int64, int64, int64) ([]int64, int64, int64)
@@ -120,7 +123,7 @@ func (in *inode) listOffsets() []int64 {
 // (len(node.key), false)
 func (kn *knode) searchGE(key Key, chkdocid bool) (int, int64, int64) {
     var kfpos, dfpos int64
-    var cmp int
+    var cmp, pos int
     ks, ds, store := kn.ks, kn.ds, kn.store
     if kn.size == 0 {
         return 0, -1, -1
@@ -139,15 +142,66 @@ func (kn *knode) searchGE(key Key, chkdocid bool) (int, int64, int64) {
 
     cmp, kfpos, dfpos = key.CompareLess(store, ks[low], ds[low], chkdocid)
     if cmp <= 0 {
-        return low, kfpos, dfpos
-    } else if high < kn.size {
-        if kfpos < 0 {
+        pos = low
+    } else {
+        pos = high
+        if kfpos < 0  &&  high < kn.size {
             _, kfpos, dfpos = key.CompareLess(store, ks[high], ds[high], chkdocid)
         }
-        return high, kfpos, dfpos
-    } else {
-        return high, -1, -1
     }
+    return pos, kfpos, dfpos
+}
+
+func (kn *knode) searchEqual(key Key) (int, bool) {
+    var cmp int
+    ks, ds, store := kn.ks, kn.ds, kn.store
+    if kn.size == 0 {
+        return 0, false
+    }
+
+    low, high := 0, kn.size
+    for (high-low) > 1 {
+        mid := (high+low) / 2
+        cmp, _, _ = key.CompareLess(store, ks[mid], ds[mid], true)
+        if cmp < 0 {
+            high = mid
+        } else {
+            low = mid
+        }
+    }
+
+    cmp, _, _ = key.CompareLess(store, ks[low], ds[low], true)
+    if cmp == 0 {
+        return low, true
+    }
+    return high, false
+}
+
+func (in *inode) searchEqual(key Key) (int, bool) {
+    var cmp int
+    ks, ds, store := in.ks, in.ds, in.store
+    if in.size == 0 {
+        return 0, false
+    }
+
+    low, high := 0, in.size
+    for (high-low) > 1 {
+        mid := (high+low) / 2
+        cmp, _, _ = key.CompareLess(store, ks[mid], ds[mid], true)
+        if cmp < 0 {
+            high = mid
+        } else {
+            low = mid
+        }
+    }
+
+    cmp, _, _ = key.CompareLess(store, ks[low], ds[low], true)
+    if cmp < 0 {
+        return low, false
+    } else if cmp == 0 {
+        return high, true
+    }
+    return high, false
 }
 
 //---- count
@@ -256,6 +310,14 @@ func (kn *knode) show(level int) {
         prefix, kn.leaf, kn.size, len(kn.ks), cap(kn.ks), len(kn.vs),
         cap(kn.vs), kn.fpos,
     )
+    for i := range kn.ks {
+        fmt.Printf(
+            "%vkey:%v docid:%v\n",
+            prefix+"  ", string(kn.store.fetchKey(kn.ks[i])),
+            string(kn.store.fetchKey(kn.ds[i])),
+        )
+    }
+    fmt.Printf("%vvalues: %v\n", prefix+"  ", kn.vs)
 }
 
 func (in *inode) show(level int) {
@@ -295,6 +357,72 @@ func (in *inode) showKeys(level int) {
         fmt.Println(prefix, "*", string(keyb), " ; ", string(docb))
     }
     in.store.FetchNode(in.vs[in.size]).showKeys(level+1)
+}
+
+func (kn *knode) check() {
+    kn.checkKeys()
+    if kn.vs[kn.size] != 0 {
+        panic("Check: last entry is not zero")
+    }
+}
+
+func (in *inode) check() {
+    in.getKnode().checkKeys()
+    for _, v := range in.vs {
+        if v == 0 {
+            panic("Check: value fpos in intermediate node cannot be zero")
+        }
+        in.store.FetchNode(v).check()
+    }
+}
+
+func (kn *knode) checkKeys() {
+    if len(kn.ks) != kn.size {
+        panic("Check: number of keys does not match size")
+    } else if len(kn.ds) != kn.size {
+        panic("Check: number of docids does not match size")
+    } else if len(kn.vs) != (kn.size+1) {
+        panic("Check: number of values does not match size")
+    }
+    for i := 0; i < kn.size-1; i++ {
+        if kn.ks[i] < 0  ||  kn.ds[i] < 0 {
+            panic("Check: File position less than zero")
+        }
+        x := kn.store.fetchKey(kn.ks[i])
+        y := kn.store.fetchKey(kn.ks[i+1])
+        cmp := bytes.Compare(x, y)
+        if cmp > 0 {
+            panic("Check: No sort order for key")
+        }
+        if cmp == 0 {
+            x = kn.store.fetchDocid(kn.ds[i])
+            y = kn.store.fetchDocid(kn.ds[i+1])
+            if bytes.Compare(x, y) > 0 {
+                panic("Check: No sort order for docid")
+            }
+        }
+    }
+}
+
+func (kn *knode) checkSeparator(keys []int64) []int64 {
+    if kn.size > 0 {
+        keys = append(keys, kn.ks[0])
+    }
+    return keys
+}
+
+func (in *inode) checkSeparator(keys []int64) []int64 {
+    inkeys := make([]int64, 0, in.store.maxKeys())
+    for _, v := range in.vs {
+        inkeys = in.store.FetchNode(v).checkSeparator(inkeys)
+    }
+    for i := range in.ks {
+        if in.ks[i] != inkeys[i+1] {
+            panic("Mismatch in separator keys")
+        }
+    }
+    keys = append(keys, inkeys[0])
+    return keys
 }
 
 func (kn *knode) levelCount(level int, acc []int64, ic, kc int64) ([]int64, int64, int64) {
