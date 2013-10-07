@@ -53,7 +53,13 @@ func (tk *TestKey) CompareLess(s *Store, kfp, dfp int64, isD bool) (int, int64, 
     var otherk, otherd []byte
     var cmp int
 
+    if Debug {
+        fmt.Println("GE", string(tk.Bytes()), kfp, dfp)
+    }
     otherk = s.fetchKey(kfp)
+    if Debug {
+        fmt.Println("GE-", string(tk.Bytes()), string(otherk))
+    }
     // Compare
     if cmp = bytes.Compare(tk.Bytes(), otherk); cmp == 0 && isD {
         if isD {

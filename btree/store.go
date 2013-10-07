@@ -86,16 +86,20 @@ func (store *Store) Destroy() {
 func (store *Store) OpStart(transaction bool) (Node, *MV, int64) {
     var mv *MV
     var root Node
+    ts := store.wstore.access()
     if transaction {
         store.wstore.translock <- true
-        staleroot := store.FetchMVCCNode(mvRoot(store))
+        rootfpos := mvRoot(store)
+        staleroot := store.FetchMVCache(rootfpos)
         root = staleroot.copyOnWrite()
-        mv = &MV{stales: []Node{staleroot}, commits: []Node{root}}
+        mv = &MV{stales: []int64{rootfpos}, commits: []Node{root}}
+        //fmt.Println("roottrans", rootfpos, root.getKnode().fpos)
     } else {
-        root = store.FetchNode(store.currentRoot())
-        mv = &MV{stales: []Node{}, commits: []Node{}}
+        root = store.FetchNCache(store.currentRoot())
+        mv = &MV{stales: []int64{}, commits: []Node{}}
+        //fmt.Println("root", root.getKnode().fpos)
     }
-    ts := store.wstore.access()
+    mv.timestamp = ts
     return root, mv, ts
 }
 
@@ -112,22 +116,52 @@ func (store *Store) currentRoot() int64 {
     return atomic.LoadInt64(&store.wstore.head.root)
 }
 
-func (store *Store) FetchNode(fpos int64) Node {
+// Fetch a node, identified by its file-position, from cache. If it is not
+// available from cache, fetch from disk and cache them in memory. To learn
+// how nodes are cached, refer to cache.go
+func (store *Store) FetchNCache(fpos int64) Node {
     var node Node
-
     // Sanity check
     fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
     if fpos < fpos_firstblock || (fpos - fpos_firstblock) % blocksize != 0 {
         panic("Invalid fpos to fetch")
     }
-
     // Try to fetch from cache
-    if node = store.wstore.cacheLookup(fpos); node != nil {
-        return node
+    if node = store.wstore.ncacheLookup(fpos); node == nil {
+        node = store.FetchNode(fpos)
+        store.wstore.ncache(node)
     }
+    node.getKnode().store = store // Super important !!
+    return node
+}
 
-    // If not, fetch the prestine block from the disk and make a knode or inode.
-    data := make([]byte, blocksize)
+// Fetch a node, identified by its file-position, from commitQ or from memory
+// cache. If it is not available from memory fetch from disk.
+// NOTE: multi-version fetches are only used from index mutations and they
+// eventually end up in commitQ under a new file-position. They are not cached
+// into memory until the snapshot is flushed into the disk.
+func (store *Store) FetchMVCache(fpos int64) Node {
+    var node Node
+    // Sanity check
+    fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
+    if fpos < fpos_firstblock || (fpos - fpos_firstblock) % blocksize != 0 {
+        panic("Invalid fpos to fetch")
+    }
+    // Try to fetch from commitQ
+    if node = store.wstore.ccacheLookup(fpos); node == nil {
+        // Try to fetch from cache
+        if node = store.wstore.ncacheLookup(fpos); node == nil {
+            node = store.FetchNode(fpos)
+        }
+    }
+    node.getKnode().store = store // Super important !!
+    return node
+}
+
+// Fetch the prestine block from disk and make a knode or inode out of it.
+func (store *Store) FetchNode(fpos int64) Node {
+    var node Node
+    data := make([]byte, store.Blocksize)
     if _, err := store.idxRfd.ReadAt(data, fpos); err != nil {
         panic(err.Error())
     }
@@ -138,27 +172,9 @@ func (store *Store) FetchNode(fpos int64) Node {
     } else {
         node = &inode{knode:kn}
     }
-    store.wstore.cache(node)
     store.loadCounts += 1
     return node
 }
-
-func (store *Store) FetchMVCCNode(fpos int64) Node {
-    var node Node
-
-    // Sanity check
-    fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
-    if fpos < fpos_firstblock || (fpos - fpos_firstblock) % blocksize != 0 {
-        panic("Invalid fpos to fetch")
-    }
-
-    // Try to fetch from commitQ
-    if node = store.wstore.ccacheLookup(fpos); node != nil {
-        return node
-    }
-    return store.FetchNode(fpos)
-}
-
 
 // Maximum number of keys that are stored in a btree block, it is always an
 // even number and adjusted for the additional value entry.

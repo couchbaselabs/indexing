@@ -3,8 +3,6 @@ package btree
 import (
     "time"
     "fmt"
-    "unsafe"
-    "sync/atomic"
 )
 
 var _ = fmt.Sprintf("keep 'fmt' import during debugging");
@@ -15,15 +13,12 @@ const(
     // messages to mvcc goroutine
     WS_ACCESS        // {WS_ACCESS} -> timestamp int64
     WS_RELEASE       // {WS_RELEASE, timestamp} -> minAccess int64
-    WS_CACHE         // {WS_CACHE, fpos}
-    WS_CACHEQ        // {WS_CACHEQ} -> nodes []Node
-    // messages to kv
-    WS_PREFETCH      // {WS_PREFETCH, fposs []int64}
-    WS_KVREAD        // {WS_KVREAD, fpos int64} -> []byte
-    // messages to io
-    WS_MVROOT        // {WS_MVROOT} -> root Node
-    WS_POPFREELIST   // {WS_POPFREELIST} -> fpos int64
-    WS_COMMIT        // {WS_COMMIT, node Node}
+    WS_SETSNAPSHOT   // {WS_SETSNAPSHOT, offsets []int64, root int64, timestamp int64}
+    // messages to defer routine
+    WS_PINGCACHE     // {WS_PINGCACHE, what byte, fpos int64, node Node}
+    WS_PINGKD        // {WS_PINGKD, fpos int64, key []byte}
+    WS_MV            // {WS_MV, mv *MV}
+    WS_SYNCSNAPSHOT  // {WS_MV, minAccess int64}
 )
 
 const (
@@ -39,12 +34,7 @@ type ReclaimData struct {
 type RecycleData ReclaimData
 
 type MVCC struct {
-    // In-memory data structure to cache intermediate nodes.
-    nodecache unsafe.Pointer
-    leafcache unsafe.Pointer
-
     // MVCC !
-    // Note that fpos listed in reclaimQ could be cached.
     accessQ []int64        // sorted slice of timestamps
 
     // Communication channel for MVCC goroutine.
@@ -65,13 +55,9 @@ func (wstore *WStore) release(timestamp int64) int64 {
     return minAccess
 }
 
-func (wstore *WStore) cache(node Node) {
-    wstore.req <- []interface{}{WS_CACHE, node}
-}
-
-func (wstore *WStore) cacheQ() []Node {
-    wstore.req <- []interface{}{WS_CACHEQ}
-    return (<-wstore.res)[0].([]Node)
+func (wstore *WStore) setSnapShot(offsets []int64, root, timestamp int64) {
+    wstore.req <- []interface{}{WS_SETSNAPSHOT, offsets, root, timestamp}
+    <-wstore.res
 }
 
 func (wstore *WStore) close() {
@@ -81,11 +67,6 @@ func (wstore *WStore) close() {
 
 func doMVCC(wstore *WStore) {
     req, res := wstore.req, wstore.res
-    newCacheQ := func() []Node {
-        return make([]Node, 0, wstore.MaxLeafCache)
-    }
-    cacheQ := newCacheQ()
-
     for {
         cmd := <-req
         if cmd == nil {
@@ -101,12 +82,12 @@ func doMVCC(wstore *WStore) {
         case WS_RELEASE:
             minAccess := wstore.minAccess(cmd[1].(int64))
             res <- []interface{}{minAccess}
-        case WS_CACHE:
-            node := cmd[1].(Node)
-            cacheQ = append(cacheQ, node)
-        case WS_CACHEQ:
-            res <- []interface{}{cacheQ}
-            cacheQ = newCacheQ()
+        case WS_SETSNAPSHOT:
+            offsets, root, ts := cmd[1].([]int64), cmd[2].(int64), cmd[3].(int64)
+            wstore.freelist.add(offsets)
+            wstore.head.setRoot(root, ts)
+            wstore.ping2Pong()
+            res <- nil
         case WS_CLOSE:
             res <- nil
         }
@@ -118,32 +99,11 @@ func (wstore *WStore) closeChannels() {
     <-wstore.res
     close(wstore.req); wstore.req = nil
     close(wstore.res); wstore.res = nil
-    wstore.kvreq <- []interface{}{WS_CLOSE}
-    <-wstore.kvres
-    close(wstore.kvreq); wstore.kvreq = nil
-    close(wstore.kvres); wstore.kvres = nil
-}
 
-func (wstore *WStore) cacheLookup(fpos int64) Node {
-    var node Node
-    nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.nodecache))
-    if node = (*nc)[fpos]; node == nil {
-        lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.leafcache))
-        node = (*lc)[fpos]
-    }
-    if node != nil {
-        wstore.cacheHits += 1
-    }
-    return node
-}
-
-func (wstore *WStore) swapCache(nodecache, leafcache *map[int64]Node) {
-    nc := atomic.LoadPointer(&wstore.nodecache)
-    atomic.CompareAndSwapPointer(
-        &wstore.nodecache, nc, unsafe.Pointer(nodecache))
-    lc := atomic.LoadPointer(&wstore.leafcache)
-    atomic.CompareAndSwapPointer(
-        &wstore.leafcache, lc, unsafe.Pointer(leafcache))
+    syncChan := make(chan interface{})
+    wstore.deferReq <- []interface{}{WS_CLOSE, syncChan}
+    <-syncChan
+    close(wstore.deferReq); wstore.deferReq = nil
 }
 
 // Demark the timestamp to zero in accessQ and return the minimum value of

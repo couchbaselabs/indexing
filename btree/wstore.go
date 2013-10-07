@@ -4,6 +4,7 @@ package btree
 import (
     "fmt"
     "os"
+    "time"
     "path/filepath"
     "sync"
     "unsafe"
@@ -22,7 +23,7 @@ type MV struct {
     timestamp int64
     root int64
     commits []Node
-    stales []Node
+    stales []int64
 }
 
 // structure that handles write.
@@ -38,18 +39,26 @@ type WStore struct {
     fpos_firstblock int64 // file offset for btree block.
     MVCC                  // MVCC concurrency control go-routine
     IO                    // IO flusher
-    KVCache               // kv-cache
+    DEFER                 // kv-cache
+    pingPong              // ping-pong cache
     WStoreStats
 }
 
 // Statistical counts
 type WStoreStats struct {
-    cacheHits int64
+    // Cache hits
+    ncHits int64
+    lcHits int64
+    keyHits int64
+    docidHits int64
     commitHits int64
-    popCounts int64
-    maxlenAccessQ int64
     maxlenNC int64
     maxlenLC int64
+    // MVCC
+    popCounts int64
+    maxlenAccessQ int64
+    reclaimCount int64
+    recycleCount int64
     appendCounts int64
     flushHeads int64
     flushFreelists int64
@@ -80,13 +89,14 @@ func OpenWStore(conf Config) *WStore {
         // Open a new instance of index file in write-mode.
         wstore = newWStore(conf)
         wstore.head = newHead(wstore)
+        wstore.head.maxkeys = calculateMaxKeys_gob(wstore.Blocksize)
         wstore.freelist = newFreeList(wstore)
         wstore.head.fetch()
         wstore.freelist.fetch(wstore.head.crc)
         writeStores[idxfile] = wstore
+        go doMVCC(wstore)
+        go doDefer(wstore)
     }
-    go doMVCC(wstore)
-    go doKV(wstore)
     return wstore
 }
 
@@ -133,10 +143,13 @@ func getWStore(conf Config) *WStore {
         // Open the new Store.
         wstore = newWStore(conf)
         wstore.head = newHead(wstore)
+        wstore.head.maxkeys = calculateMaxKeys_gob(wstore.Blocksize)
         wstore.freelist = newFreeList(wstore)
         wstore.head.fetch()
         wstore.freelist.fetch(wstore.head.crc)
         writeStores[idxfile] = wstore
+        go doMVCC(wstore)
+        go doDefer(wstore)
     }
     return wstore
 }
@@ -160,23 +173,26 @@ func newWStore(conf Config) *WStore {
         kvWfd: openWfd(conf.Kvfile, kvmode, 0660),
         fpos_firstblock: conf.Sectorsize*2 + conf.Flistsize*2,
         MVCC: MVCC{
-            nodecache: unsafe.Pointer(newNodeCache()),
-            leafcache: unsafe.Pointer(newNodeCache()),
             accessQ: make([]int64, 0),
             // Channel for MVCC concurrency control.
             req: make(chan []interface{}),
             res: make(chan []interface{}),
             translock: make(chan bool, 1),
         },
+        pingPong: pingPong {
+            ncping: unsafe.Pointer(newNodeCache()),
+            lcping: unsafe.Pointer(newNodeCache()),
+            ncpong: unsafe.Pointer(newNodeCache()),
+            lcpong: unsafe.Pointer(newNodeCache()),
+            kdping: unsafe.Pointer(newKDCache()),
+            kdpong: unsafe.Pointer(newKDCache()),
+        },
         IO: IO{
             mvQ: make([]*MV, 0, conf.DrainRate),
             commitQ: map[int64]Node{},
         },
-        KVCache: KVCache {
-            kvCache: make(map[int64][]byte),
-            // Channel for MVCC concurrency control.
-            kvreq: make(chan []interface{}),
-            kvres: make(chan []interface{}),
+        DEFER: DEFER {
+            deferReq: make(chan []interface{}, 2000),
         },
     }
     return wstore
@@ -217,6 +233,7 @@ func createWStore(conf Config) {
     // Create a head, and freelist
     wstore := newWStore(conf)
     wstore.head = newHead(wstore)
+    wstore.head.maxkeys = calculateMaxKeys_gob(wstore.Blocksize)
     wstore.freelist = newFreeList(wstore)
 
     // Setup the head and freelist on disk.
@@ -228,7 +245,7 @@ func createWStore(conf Config) {
     b := (&block{leaf: TRUE}).newBlock(0, 0)
     root := &knode{block: *b, fpos: fpos, dirty: true}
     wstore.flushNode(root)
-    wstore.head.setRoot(root.fpos)
+    wstore.head.setRoot(root.fpos, time.Now().UnixNano())
     crc := wstore.freelist.flush()
     wstore.head.flush(crc)
     // Close wstore
@@ -236,8 +253,7 @@ func createWStore(conf Config) {
     wstore.idxWfd.Close(); wstore.idxWfd = nil
     close(wstore.req); wstore.req = nil
     close(wstore.res); wstore.res = nil
-    close(wstore.kvreq); wstore.kvreq = nil
-    close(wstore.kvres); wstore.kvres = nil
+    close(wstore.deferReq); wstore.deferReq = nil
     close(wstore.translock); wstore.translock = nil
 }
 
@@ -293,6 +309,10 @@ func newNodeCache() *map[int64]Node {
     m := make(map[int64]Node)
     return &m
 }
+func newKDCache() *map[int64][]byte {
+    m := make(map[int64][]byte)
+    return &m
+}
 
 func (wstore *WStore) appendCount() int {
     count := int(float32(wstore.maxFreeBlocks()) * wstore.AppendRatio)
@@ -311,6 +331,8 @@ func (wstore *WStore) judgementDay() {
         panic("still a store access is in-progress")
     }
     wstore.head = nil; wstore.freelist = nil;
-    wstore.nodecache = nil; wstore.leafcache = nil;
+    wstore.ncpong = nil; wstore.lcpong = nil;
+    wstore.ncping = nil; wstore.lcping = nil;
+    wstore.kdping = nil; wstore.kdpong = nil;
     wstore.commitQ = nil; wstore.accessQ = nil;
 }

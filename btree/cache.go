@@ -1,0 +1,186 @@
+package btree
+
+import (
+    "sync"
+    "fmt"
+    "sync/atomic"
+    "unsafe"
+    "os"
+)
+
+var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+
+// In-memory data structure to cache intermediate nodes.
+type pingPong struct {
+    // pong map for intermediate nodes and leaf nodes
+    ncpong unsafe.Pointer
+    lcpong unsafe.Pointer
+    // ping map for intermediate nodes and leaf nodes
+    ncping unsafe.Pointer
+    lcping unsafe.Pointer
+    // pong map for keys and docids
+    kdping unsafe.Pointer
+    kdpong unsafe.Pointer
+    sync.RWMutex
+}
+
+func (wstore *WStore) ncache(node Node) {
+    wstore.Lock()
+    defer wstore.Unlock()
+    fpos := node.getKnode().fpos
+    if node.isLeaf() {
+        lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
+        (*lc)[fpos] = node
+    } else {
+        nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
+        (*nc)[fpos] = node
+    }
+}
+
+func (wstore *WStore) ncacheLookup(fpos int64) Node {
+    wstore.RLock()
+    defer wstore.RUnlock()
+
+    var node Node
+    nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
+    if node = (*nc)[fpos]; node == nil {
+        lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
+        if node = (*lc)[fpos]; node != nil {
+            wstore.lcHits += 1
+        }
+    } else {
+        wstore.ncHits += 1
+    }
+    return node
+}
+
+func (wstore *WStore) _pingCache(fpos int64, node Node) {
+    nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+    lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    if node.isLeaf() {
+        (*lc)[fpos] = node
+    } else {
+        (*nc)[fpos] = node
+    }
+}
+
+func (wstore *WStore) _pingCacheEvict(fpos int64) {
+    nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+    lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    delete(*nc, fpos)
+    delete(*lc, fpos)
+}
+
+func (wstore *WStore) cacheKey(fpos int64, key []byte) {
+    wstore.pingKey(DEFER_ADD, fpos, key)
+}
+
+func (wstore *WStore) cacheDocid(fpos int64, docid []byte) {
+    wstore.pingDocid(DEFER_ADD, fpos, docid)
+}
+
+func (wstore *WStore) lookupKey(rfd *os.File, fpos int64) []byte {
+    var key []byte
+    kdpong := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdpong))
+    if key = (*kdpong)[fpos]; key == nil {
+        return wstore.readKV(rfd, fpos)
+    } else {
+        wstore.keyHits += 1
+    }
+    return key
+}
+
+func (wstore *WStore) lookupDocid(rfd *os.File, fpos int64) []byte {
+    var docid []byte
+    kdpong := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdpong))
+    if docid = (*kdpong)[fpos]; docid == nil {
+        return wstore.readKV(rfd, fpos)
+    } else {
+        wstore.docidHits += 1
+    }
+    return docid
+}
+
+func (wstore *WStore) ping2Pong() {
+    // Swap nodecache
+    ncping := atomic.LoadPointer(&wstore.ncping)
+    ncpong := atomic.LoadPointer(&wstore.ncpong)
+    atomic.StorePointer(&wstore.ncpong, ncping)
+    atomic.StorePointer(&wstore.ncping, ncpong)
+    // Swap leafcache
+    lcping := atomic.LoadPointer(&wstore.lcping)
+    lcpong := atomic.LoadPointer(&wstore.lcpong)
+    atomic.StorePointer(&wstore.lcpong, lcping)
+    atomic.StorePointer(&wstore.lcping, lcpong)
+
+    // Swap keycache
+    kdping := atomic.LoadPointer(&wstore.kdping)
+    kdpong := atomic.LoadPointer(&wstore.kdpong)
+    atomic.StorePointer(&wstore.kdpong, kdping)
+    atomic.StorePointer(&wstore.kdping, kdpong)
+
+    // Trim leaf cache
+    lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    if len(*lc) > wstore.MaxLeafCache {
+        i := len(*lc)
+        for x := range *lc {
+            if i < wstore.MaxLeafCache {
+                break
+            }
+            delete(*lc, x)
+        }
+    }
+}
+
+func (wstore *WStore) displayPing() {
+    ncping := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+    fposs := make([]int64, 0, 100)
+    for fpos, _ := range *ncping {
+        fposs = append(fposs, fpos)
+    }
+    fmt.Println("fposs", fposs)
+
+    lcping := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    fposs = make([]int64, 0, 100)
+    for fpos, _ := range *lcping {
+        fposs = append(fposs, fpos)
+    }
+    fmt.Println("fposs", fposs)
+}
+
+func (wstore *WStore) checkPingPong() {
+    ncping := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+    ncpong := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
+    if len(*ncping) != len(*ncpong) {
+        panic("Mismatch in nc ping-pong lengths")
+    }
+    for fpos := range *ncping {
+        if (*ncpong)[fpos] == nil {
+            panic("fpos not found in nc ping-pong")
+        }
+    }
+    wstore.maxlenNC = max(wstore.maxlenNC, int64(len(*ncping)))
+
+    lcping := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    //lcpong := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
+    //if len(*lcping) != len(*lcpong) {
+    //    panic("Mismatch in lc ping-pong lengths")
+    //}
+    //for fpos := range *lcping {
+    //    if (*lcpong)[fpos] == nil {
+    //        panic("fpos not found in lc ping-pong")
+    //    }
+    //}
+    wstore.maxlenLC = max(wstore.maxlenLC, int64(len(*lcping)))
+
+    kdping := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdping))
+    kdpong := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdpong))
+    if len(*kdping) != len(*kdpong) {
+        panic("Mismatch in kd ping-pong lengths")
+    }
+    for fpos := range *kdping {
+        if (*kdpong)[fpos] == nil {
+            panic("fpos not found in kd ping-pong")
+        }
+    }
+}

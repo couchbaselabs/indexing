@@ -30,9 +30,9 @@ func (kn *knode) insert(key Key, v Value, mv *MV) (Node,int64,int64) {
 func (in *inode) insert(key Key, v Value, mv *MV) (Node,int64,int64) {
     index, _, _ := in.searchGE(key, true)
     // Copy on write
-    stalechild := in.store.FetchMVCCNode(in.vs[index])
+    stalechild := in.store.FetchMVCache(in.vs[index])
     child := stalechild.copyOnWrite()
-    mv.stales = append(mv.stales, stalechild)
+    mv.stales = append(mv.stales, stalechild.getKnode().fpos)
     mv.commits = append(mv.commits, child)
 
     // Recursive insert

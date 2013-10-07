@@ -29,17 +29,17 @@ func main() {
         RebalanceThrs: 5,
         AppendRatio: 0.7,
         DrainRate: 600,
-        MaxLeafCache: 20000,
+        MaxLeafCache: 1000,
         Sync: false,
         Nocache: false,
     }
     store := btree.NewStore(conf)
     bt := btree.NewBTree(store)
     factor := 1
-    count := 1000
+    count := 10000
     seed := time.Now().UnixNano()
     fmt.Println("Seed:", seed)
-    keys, values := btree.TestData(1000, seed)
+    keys, values := btree.TestData(count, seed)
     fmt.Println(time.Now())
     for i := 0; i < factor; i++ {
         for j := 0; j < count; j++ {

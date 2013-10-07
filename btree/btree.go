@@ -41,6 +41,8 @@ type Config struct {
     Nocache bool
 }
 
+var Debug bool
+
 // Btree instance
 type BTree struct {
     Config
@@ -299,24 +301,36 @@ func (bt *BTree) Stats() {
     store := bt.store
     wstore := store.wstore
     fmt.Printf(
-        "cacheHits:    %10v    popCounts:  %10v    maxlenAccessQ: %10v\n",
-        wstore.cacheHits, wstore.popCounts, wstore.maxlenAccessQ,
+        "ncHits:       %10v      lcHits:   %10v     keyHits:      %10v\n",
+        wstore.ncHits, wstore.lcHits, wstore.keyHits,
     )
     fmt.Printf(
-        "commitHits:   %10v    maxlenNC:   %10v    maxlenLC:      %10v \n",
-        wstore.commitHits, wstore.maxlenNC, wstore.maxlenLC,
+        "docidHits:    %10v     maxlenNC:  %10v    maxlenLC:      %10v \n",
+        wstore.docidHits, wstore.maxlenNC, wstore.maxlenLC,
+    )
+    fmt.Printf(
+        "commitHits:   %10v    popCounts:  %10v    maxlenAccessQ: %10v\n",
+        wstore.commitHits, wstore.popCounts, wstore.maxlenAccessQ,
+    )
+    fmt.Printf(
+        "reclaimed:    %10v    recycled:   %10v   commitQ: %-10v mvQ:%-10v\n",
+        wstore.reclaimCount, wstore.recycleCount, len(wstore.commitQ),
+        len(wstore.mvQ),
     )
     fmt.Printf(
         "appendCounts: %10v    flushHeads: %10v    flushFreelists:%10v\n",
         wstore.appendCounts, wstore.flushHeads, wstore.flushFreelists,
     )
     fmt.Printf(
-        "dumpCounts: %v loadCounts: %v readKV: %v appendKV: %v\n",
-        wstore.dumpCounts, store.loadCounts, wstore.countReadKV,
-        wstore.countAppendKV,
+        "dumpCounts:   %10v    loadCounts: %10v\n",
+        wstore.dumpCounts, store.loadCounts,
     )
     fmt.Printf(
-        "garbageBlocks: %v freelist: %v\n",
+        "readKV:       %10v      appendKV: %10v\n",
+        wstore.countReadKV, wstore.countAppendKV,
+    )
+    fmt.Printf(
+        "garbageBlocks:%10v      freelist: %10v\n",
         wstore.garbageBlocks, len(wstore.freelist.offsets),
     )
     // Level counts

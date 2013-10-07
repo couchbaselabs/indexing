@@ -35,7 +35,8 @@ func (store *Store) appendValueS(val string) int64 {
 
 // Append/Fetch key as either byte-slice or string
 func (store *Store) fetchKey(fpos int64) []byte {
-    return store.wstore.readKV(store.kvRfd, fpos)
+    x := store.wstore.readKV(store.kvRfd, fpos)
+    return x
 }
 
 func (store *Store) fetchKeyS(fpos int64) string {

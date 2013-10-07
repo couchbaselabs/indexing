@@ -41,12 +41,12 @@ func main() {
     //pprof.WriteHeapProfile(memprof)
     //defer pprof.StopCPUProfile()
 
-    for i := 0; i < 10; i++ {
+    for i := 0; i < 100; i++ {
         seed := time.Now().UnixNano()
         fmt.Println("Seed:", seed)
         factor := i
-        count := i*1000
-        doinsert(seed, factor, count, bt, i < 3)
+        count := 1000
+        doinsert(seed, factor, count, bt, false)
         bt.Drain()
         bt.Check()
         fmt.Println("Done ", time.Now().UnixNano()/1000000, factor*count)

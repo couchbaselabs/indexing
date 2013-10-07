@@ -47,9 +47,9 @@ func (in *inode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
     index, equal := in.searchEqual(key)
 
     // Copy on write
-    stalechild := in.store.FetchMVCCNode(in.vs[index])
+    stalechild := in.store.FetchMVCache(in.vs[index])
     child := stalechild.copyOnWrite()
-    mv.stales = append(mv.stales, stalechild)
+    mv.stales = append(mv.stales, stalechild.getKnode().fpos)
     mv.commits = append(mv.commits, child)
 
     // Recursive remove
@@ -77,14 +77,14 @@ func (in *inode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
 
     // Try to rebalance from left, if there is a left node available.
     if rebalnc && (index > 0) {
-        left := in.store.FetchMVCCNode(in.vs[index-1])
+        left := in.store.FetchMVCache(in.vs[index-1])
         if canRebalance(child, left) {
             node, index = in.rebalanceLeft(index, child, left, mv)
         }
     }
     // Try to rebalance from right, if there is a right node available.
     if rebalnc  &&  (index >= 0)  &&  (index+1 <= in.size) {
-        right := in.store.FetchMVCCNode(in.vs[index+1])
+        right := in.store.FetchMVCache(in.vs[index+1])
         if canRebalance(child, right) {
             node, index = in.rebalanceRight(index, child, right, mv)
         }
@@ -104,7 +104,7 @@ func (in *inode) rebalanceLeft(index int, child Node, left Node, mv *MV) (Node, 
         _, stalenodes := left.mergeRight(child, mk, md)
         mv.stales = append(mv.stales, stalenodes...)
         if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
-            mv.stales = append(mv.stales, in)
+            mv.stales = append(mv.stales, in.fpos)
             return child, -1
         } else {
             // The median aka seperator has to go
@@ -119,7 +119,7 @@ func (in *inode) rebalanceLeft(index int, child Node, left Node, mv *MV) (Node, 
             return in, index-1
         }
     } else {
-        mv.stales = append(mv.stales, left)
+        mv.stales = append(mv.stales, left.getKnode().fpos)
         left := left.copyOnWrite()
         mv.commits = append(mv.commits, left)
         in.ks[index-1], in.ds[index-1] = left.rotateRight(child, count, mk, md)
@@ -136,7 +136,7 @@ func (in *inode) rebalanceRight(index int, child Node, right Node, mv *MV) (Node
         _, stalenodes := child.mergeLeft(right, mk, md)
         mv.stales = append(mv.stales, stalenodes...)
         if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
-            mv.stales = append(mv.stales, in)
+            mv.stales = append(mv.stales, in.fpos)
             return child, -1
         } else {
             // The median aka separator has to go
@@ -151,7 +151,7 @@ func (in *inode) rebalanceRight(index int, child Node, right Node, mv *MV) (Node
             return in, index
         }
     } else {
-        mv.stales = append(mv.stales, right)
+        mv.stales = append(mv.stales, right.getKnode().fpos)
         right := right.copyOnWrite()
         mv.commits = append(mv.commits, right)
         in.ks[index], in.ds[index] = child.rotateLeft(right, count, mk, md)
@@ -173,7 +173,7 @@ func (from *knode) balance(to Node) int {
 // Merge `kn` into `other` Node, and return,
 //  - merged `other` node,
 //  - `kn` as stalenode
-func (kn *knode) mergeRight(othern Node, mk, md int64) (Node, []Node) {
+func (kn *knode) mergeRight(othern Node, mk, md int64) (Node, []int64) {
     other := othern.(*knode)
     max := kn.store.maxKeys()
     if kn.size + other.size >= max {
@@ -197,7 +197,7 @@ func (kn *knode) mergeRight(othern Node, mk, md int64) (Node, []Node) {
     }
 
     kn.store.wstore.countMergeRight += 1
-    return other, []Node{kn}
+    return other, []int64{kn.fpos}
 }
 
 // rotate `count` entries from `left` node to child `n` node. Return the median
@@ -238,7 +238,7 @@ func (left *knode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
 // Merge `other` into `kn` Node, and return,
 //  - merged `kn` node,
 //  - `other` as stalenode
-func (kn *knode) mergeLeft(othern Node, mk, md int64) (Node, []Node) {
+func (kn *knode) mergeLeft(othern Node, mk, md int64) (Node, []int64) {
     other := othern.(*knode)
     max := kn.store.maxKeys()
     if kn.size + other.size >= max {
@@ -259,7 +259,7 @@ func (kn *knode) mergeLeft(othern Node, mk, md int64) (Node, []Node) {
     }
 
     kn.store.wstore.countMergeLeft += 1
-    return kn, []Node{other}
+    return kn, []int64{other.fpos}
 }
 
 // rotate `count` entries from right `n` node to `child` node. Return median
@@ -301,7 +301,7 @@ func (child *knode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
 // Merge `in` into `other` Node, and return,
 //  - merged `other` node,
 //  - `in` as stalenode
-func (in *inode) mergeRight(othern Node, mk, md int64) (Node, []Node) {
+func (in *inode) mergeRight(othern Node, mk, md int64) (Node, []int64) {
     other := othern.(*inode)
     max := in.store.maxKeys()
     if (in.size + other.size + 1) >= max {
@@ -321,7 +321,7 @@ func (in *inode) mergeRight(othern Node, mk, md int64) (Node, []Node) {
     other.size = len(other.ks)
 
     in.store.wstore.countMergeRight += 1
-    return other, []Node{in}
+    return other, []int64{in.fpos}
 }
 
 // rotate `count` entries from `left` node to child `n` node. Return the median
@@ -362,7 +362,7 @@ func (left *inode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
 // Merge `other` into `in` Node, and return,
 //  - merged `in` node,
 //  - `other` as stalenode
-func (in *inode) mergeLeft(othern Node, mk, md int64) (Node, []Node) {
+func (in *inode) mergeLeft(othern Node, mk, md int64) (Node, []int64) {
     other := othern.(*inode)
     max := in.store.maxKeys()
     if (in.size + other.size + 1) >= max {
@@ -379,7 +379,7 @@ func (in *inode) mergeLeft(othern Node, mk, md int64) (Node, []Node) {
     in.size = len(in.ks)
 
     in.store.wstore.countMergeLeft += 1
-    return in, []Node{other}
+    return in, []int64{other.fpos}
 }
 
 // rotate `count` entries from right `n` node to `child` node. Return median

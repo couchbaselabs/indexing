@@ -38,7 +38,7 @@ func main() {
         Nocache: false,
     }
     bt := btree.NewBTree(btree.NewStore(conf))
-    factor := 10
+    factor := 1
     count := 10000
     seed := time.Now().UnixNano()
 

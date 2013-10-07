@@ -29,6 +29,7 @@ type Head struct {
     blocksize int64  // btree block size in bytes.
     maxkeys int64    // Maximum number of keys that can be store in btree block.
     root int64       // file-offset into index file that has root block
+    timestamp int64  // snapshot's timestamp is synced with disk aswell.
     fpos_head1 int64 // file-offset into index file where 1st-head is
     fpos_head2 int64 // file-offset into index file where 2nd-head is
     crc uint32       // CRC value for head sector + freelist block
@@ -42,7 +43,6 @@ func newHead(wstore *WStore) *Head {
         sectorsize: wstore.Sectorsize,
         flistsize: wstore.Flistsize,
         blocksize: wstore.Blocksize,
-        maxkeys: calculateMaxKeys(wstore.Blocksize),
         dirty: false,
         root: 0,
         fpos_head1: 0,
@@ -52,11 +52,12 @@ func newHead(wstore *WStore) *Head {
 }
 
 // Clone `hd` to `newhd`.
-func (hd *Head) clone() *Head{
+func (hd *Head) clone() *Head {
     newhd := newHead(hd.wstore)
     newhd.pick = hd.pick
     newhd.dirty = hd.dirty
     newhd.root = hd.root
+    newhd.timestamp = hd.timestamp
     return newhd
 }
 
@@ -71,6 +72,9 @@ func (hd *Head) fetch() bool {
 
     rfd.Seek(hd.fpos_head1, os.SEEK_SET) // Read from first sector
     if err := binary.Read(rfd, LittleEndian, &hd.root); err != nil {
+        panic("Unable to read root from first head sector")
+    }
+    if err := binary.Read(rfd, LittleEndian, &hd.timestamp); err != nil {
         panic("Unable to read root from first head sector")
     }
     if err := binary.Read(rfd, LittleEndian, &hd.sectorsize); err != nil {
@@ -109,9 +113,10 @@ func (hd *Head) fetch() bool {
 
 // Refer to new root block. When ever an entry / block is updated the entire
 // chain has to be re-added.
-func (hd *Head) setRoot(fpos int64) *Head {
+func (hd *Head) setRoot(fpos int64, timestamp int64) *Head {
     hd.root = fpos
     hd.dirty = true
+    hd.timestamp = timestamp
     return hd
 }
 
@@ -124,6 +129,7 @@ func (hd *Head) flush(crc uint32) *Head {
 
     buf := bytes.NewBuffer([]byte{})
     binary.Write(buf, LittleEndian, &hd.root);
+    binary.Write(buf, LittleEndian, &hd.timestamp);
     binary.Write(buf, LittleEndian, &hd.sectorsize);
     binary.Write(buf, LittleEndian, &hd.flistsize);
     binary.Write(buf, LittleEndian, &hd.blocksize);
