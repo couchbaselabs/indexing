@@ -1,14 +1,52 @@
+// The following is the general idea on cache structure.
+//
+//                                  |
+//  *------------*    WRITE         |     READ       *------------*
+//  |   inode    |       ^          |       ^        |   inode    |
+//  | ping-cache |       |          |       |        | pong-cache |
+//  |            |       *<-----*-----------*        |            |
+//  |   knode    |       |      |   |       *------->|   knode    |
+//  | ping-cache |       |      |   |     ncache()   | pong-cache |
+//  *------------*       |  commitQ |                *------------*
+//        ^              V      ^   |        (Locked access using sync.Mutex)
+//        |           *------*  |   |
+// commits*-----------| MVCC |<-*   |
+// recyles            *------*      |
+// reclaims              |          |
+//                       *----->ping2Pong() (atomic, no locking)
+//                                  |
+//                                  |
+//
+// The cycle of ping-pong,
+//
+//  - reads will always refer to the pong-cache.
+//  - reads will populate the cache from disk, when ever cache lookup fails.
+//  - writes will refer to the commitQ maintained by MVCC, if node is not in
+//    commitQ it will refer to pong-cache.
+//
+//  - ping-cache is operated only by the MVCC controller.
+//  - MVCC controller will _populate_ the ping-cache when new nodes are
+//    generated due to index mutations.
+//  - MVCC controller will _evict_ the pong-cache as and when nodes become stale
+//    due to index mutations.
+//
+//  - ping2Pong() happens when snapshot is flushed to disk.
+//  - pong becomes ping, and MVCC controller will _populate_ and _evict_ the
+//    newly flipped ping-cache based on commited, recycled and reclaimed node,
+//    before allowing further mutations.
+//
+
 package btree
 
 import (
-    "sync"
     "fmt"
+    "os"
+    "sync"
     "sync/atomic"
     "unsafe"
-    "os"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // In-memory data structure to cache intermediate nodes.
 type pingPong struct {
@@ -29,11 +67,17 @@ func (wstore *WStore) ncache(node Node) {
     defer wstore.Unlock()
     fpos := node.getKnode().fpos
     if node.isLeaf() {
+        //fmt.Println("lcpong")
         lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
-        (*lc)[fpos] = node
+        if len(*lc) < wstore.MaxLeafCache {
+            (*lc)[fpos] = node
+        }
+        wstore.maxlenLC = max(wstore.maxlenLC, int64(len(*lc)))
     } else {
+        //fmt.Println("ncpong")
         nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
         (*nc)[fpos] = node
+        wstore.maxlenNC = max(wstore.maxlenNC, int64(len(*nc)))
     }
 }
 
@@ -138,14 +182,12 @@ func (wstore *WStore) displayPing() {
     for fpos, _ := range *ncping {
         fposs = append(fposs, fpos)
     }
-    fmt.Println("fposs", fposs)
 
     lcping := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
     fposs = make([]int64, 0, 100)
     for fpos, _ := range *lcping {
         fposs = append(fposs, fpos)
     }
-    fmt.Println("fposs", fposs)
 }
 
 func (wstore *WStore) checkPingPong() {
@@ -159,9 +201,8 @@ func (wstore *WStore) checkPingPong() {
             panic("fpos not found in nc ping-pong")
         }
     }
-    wstore.maxlenNC = max(wstore.maxlenNC, int64(len(*ncping)))
 
-    lcping := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    //lcping := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
     //lcpong := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
     //if len(*lcping) != len(*lcpong) {
     //    panic("Mismatch in lc ping-pong lengths")
@@ -171,7 +212,6 @@ func (wstore *WStore) checkPingPong() {
     //        panic("fpos not found in lc ping-pong")
     //    }
     //}
-    wstore.maxlenLC = max(wstore.maxlenLC, int64(len(*lcping)))
 
     kdping := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdping))
     kdpong := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdpong))

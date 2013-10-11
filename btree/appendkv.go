@@ -1,5 +1,5 @@
 // Supplies API to append/fetch key/value/docid from kv-file. kv-file is
-// opened and managed by the Store API.
+// opened and managed by the WStore structure.
 // entry format is,
 //
 //      | 4-byte size | size-byte value |
@@ -14,7 +14,7 @@ import (
     "os"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // Append/Fetch value as either byte-slice or string
 func (store *Store) fetchValue(fpos int64) []byte {
@@ -68,7 +68,7 @@ func (store *Store) appendDocidS(docid string) int64 {
     return store.wstore.appendKV([]byte(docid))
 }
 
-// Read bytes from `kvStore.rfd` at `fpos`
+// Read bytes from `kvStore.rfd` at `fpos`.
 func (wstore *WStore) readKV(rfd *os.File, fpos int64) []byte {
     var size int32
     if _, err := rfd.Seek(fpos, os.SEEK_SET); err != nil {

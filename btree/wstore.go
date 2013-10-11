@@ -4,14 +4,14 @@ package btree
 import (
     "fmt"
     "os"
-    "time"
     "path/filepath"
     "sync"
-    "unsafe"
     "syscall"
+    "time"
+    "unsafe"
 )
 
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", syscall.F_NOCACHE);
+var _ = fmt.Sprintln("keep 'fmt' import during debugging", syscall.F_NOCACHE)
 
 // WStore instances are created for each index. If applications tend to create
 // multiple stores for the same index file, they will refer to the same
@@ -21,9 +21,9 @@ var wmu sync.Mutex // Protected access to `writeStores`
 
 type MV struct {
     timestamp int64
-    root int64
-    commits []Node
-    stales []int64
+    root      int64
+    commits   []Node
+    stales    []int64
 }
 
 // structure that handles write.
@@ -31,49 +31,52 @@ type WStore struct {
     Config
     // More than one *Store can refer to a single instance of *WStore. Don't
     // close *WStore until refcount becomes Zero.
-    refcount int
-    idxWfd *os.File       // index-file opened in write-only mode.
-    kvWfd *os.File        // file descriptor opened in append-only mode.
-    head *Head            // head of the index store.
-    freelist *FreeList    // list of free blocks.
-    fpos_firstblock int64 // file offset for btree block.
-    MVCC                  // MVCC concurrency control go-routine
-    IO                    // IO flusher
-    DEFER                 // kv-cache
-    pingPong              // ping-pong cache
+    refcount        int
+    idxWfd          *os.File  // index-file opened in write-only mode.
+    kvWfd           *os.File  // file descriptor opened in append-only mode.
+    head            *Head     // head of the index store.
+    freelist        *FreeList // list of free blocks.
+    fpos_firstblock int64     // file offset for btree block.
+    MVCC                      // MVCC concurrency control go-routine
+    IO                        // IO flusher
+    DEFER                     // kv-cache
+    pingPong                  // ping-pong cache
     WStoreStats
 }
 
 // Statistical counts
 type WStoreStats struct {
     // Cache hits
-    ncHits int64
-    lcHits int64
-    keyHits int64
-    docidHits int64
+    ncHits     int64
+    lcHits     int64
+    keyHits    int64
+    docidHits  int64
     commitHits int64
-    maxlenNC int64
-    maxlenLC int64
+    maxlenNC   int64
+    maxlenLC   int64
     // MVCC
-    popCounts int64
-    maxlenAccessQ int64
-    reclaimCount int64
-    recycleCount int64
-    appendCounts int64
-    flushHeads int64
-    flushFreelists int64
-    dumpCounts int64
-    countAppendKV int64
-    countReadKV int64
-    countMergeLeft int64
-    countMergeRight int64
-    countRotateLeft int64
+    popCounts        int64
+    maxlenAccessQ    int64
+    reclaimCount     int64
+    recycleCount     int64
+    appendCounts     int64
+    flushHeads       int64
+    flushFreelists   int64
+    countAppendKV    int64
+    countReadKV      int64
+    countMergeLeft   int64
+    countMergeRight  int64
+    countRotateLeft  int64
     countRotateRight int64
-    garbageBlocks int64
+    garbageBlocks    int64
+    dumpCounts       int64
+    loadCounts       int64
+    MVloadCounts     int64
+    opCounts         int64
 }
 
 // Main API to get or instantiate a write-store. If write-store for this index
-// file is already created, it will bre returned after incrementing the 
+// file is already created, it will bre returned after incrementing the
 // reference count.
 func OpenWStore(conf Config) *WStore {
     var wstore *WStore
@@ -82,7 +85,7 @@ func OpenWStore(conf Config) *WStore {
         <-wstore.res
     }()
     wstore = getWStore(conf) // Try getting a write-store
-    if wstore == nil { // nil means we have to create a new index file
+    if wstore == nil {       // nil means we have to create a new index file
         idxfile, _ := filepath.Abs(conf.Idxfile)
         // If index file is not even created, then create a new index file.
         createWStore(conf)
@@ -106,10 +109,13 @@ func (wstore *WStore) CloseWStore() bool {
         wstore.commit(nil, 0, true)
         wstore.closeChannels()
         // Cleanup
-        wstore.kvWfd.Close();  wstore.kvWfd = nil
-        wstore.idxWfd.Close(); wstore.idxWfd = nil
+        wstore.kvWfd.Close()
+        wstore.kvWfd = nil
+        wstore.idxWfd.Close()
+        wstore.idxWfd = nil
         wstore.judgementDay()
-        close(wstore.translock); wstore.translock = nil
+        close(wstore.translock)
+        wstore.translock = nil
         return true
     }
     return false
@@ -143,10 +149,12 @@ func getWStore(conf Config) *WStore {
         // Open the new Store.
         wstore = newWStore(conf)
         wstore.head = newHead(wstore)
-        wstore.head.maxkeys = calculateMaxKeys_gob(wstore.Blocksize)
         wstore.freelist = newFreeList(wstore)
         wstore.head.fetch()
         wstore.freelist.fetch(wstore.head.crc)
+        // FIXME : following call is not required since maxkeys should be
+        // present in indexfile.
+        wstore.head.maxkeys = calculateMaxKeys_gob(wstore.Blocksize)
         writeStores[idxfile] = wstore
         go doMVCC(wstore)
         go doDefer(wstore)
@@ -156,7 +164,7 @@ func getWStore(conf Config) *WStore {
 
 // New instance of wstore.
 func newWStore(conf Config) *WStore {
-    idxmode, kvmode := os.O_WRONLY, os.O_APPEND | os.O_WRONLY
+    idxmode, kvmode := os.O_WRONLY, os.O_APPEND|os.O_WRONLY
     // open in durability mode.
     if conf.Sync {
         idxmode |= os.O_SYNC
@@ -167,19 +175,18 @@ func newWStore(conf Config) *WStore {
         kvmode |= syscall.F_NOCACHE
     }
     wstore := &WStore{
-        Config: conf,
-        refcount: 1,
-        idxWfd: openWfd(conf.Idxfile, idxmode, 0660),
-        kvWfd: openWfd(conf.Kvfile, kvmode, 0660),
+        Config:          conf,
+        refcount:        1,
+        idxWfd:          openWfd(conf.Idxfile, idxmode, 0660),
+        kvWfd:           openWfd(conf.Kvfile, kvmode, 0660),
         fpos_firstblock: conf.Sectorsize*2 + conf.Flistsize*2,
         MVCC: MVCC{
-            accessQ: make([]int64, 0),
-            // Channel for MVCC concurrency control.
-            req: make(chan []interface{}),
-            res: make(chan []interface{}),
+            accessQ:   make([]int64, 0),
+            req:       make(chan []interface{}),
+            res:       make(chan []interface{}),
             translock: make(chan bool, 1),
         },
-        pingPong: pingPong {
+        pingPong: pingPong{
             ncping: unsafe.Pointer(newNodeCache()),
             lcping: unsafe.Pointer(newNodeCache()),
             ncpong: unsafe.Pointer(newNodeCache()),
@@ -188,10 +195,10 @@ func newWStore(conf Config) *WStore {
             kdpong: unsafe.Pointer(newKDCache()),
         },
         IO: IO{
-            mvQ: make([]*MV, 0, conf.DrainRate),
+            mvQ:     make([]*MV, 0, conf.DrainRate),
             commitQ: map[int64]Node{},
         },
-        DEFER: DEFER {
+        DEFER: DEFER{
             deferReq: make(chan []interface{}, 2000),
         },
     }
@@ -249,12 +256,18 @@ func createWStore(conf Config) {
     crc := wstore.freelist.flush()
     wstore.head.flush(crc)
     // Close wstore
-    wstore.kvWfd.Close();  wstore.kvWfd = nil
-    wstore.idxWfd.Close(); wstore.idxWfd = nil
-    close(wstore.req); wstore.req = nil
-    close(wstore.res); wstore.res = nil
-    close(wstore.deferReq); wstore.deferReq = nil
-    close(wstore.translock); wstore.translock = nil
+    wstore.kvWfd.Close()
+    wstore.kvWfd = nil
+    wstore.idxWfd.Close()
+    wstore.idxWfd = nil
+    close(wstore.req)
+    wstore.req = nil
+    close(wstore.res)
+    wstore.res = nil
+    close(wstore.deferReq)
+    wstore.deferReq = nil
+    close(wstore.translock)
+    wstore.translock = nil
 }
 
 // appendBlocks will add new free blocks at the end of the index-file. New
@@ -330,9 +343,14 @@ func (wstore *WStore) judgementDay() {
     if len(wstore.accessQ) > 0 {
         panic("still a store access is in-progress")
     }
-    wstore.head = nil; wstore.freelist = nil;
-    wstore.ncpong = nil; wstore.lcpong = nil;
-    wstore.ncping = nil; wstore.lcping = nil;
-    wstore.kdping = nil; wstore.kdpong = nil;
-    wstore.commitQ = nil; wstore.accessQ = nil;
+    wstore.head = nil
+    wstore.freelist = nil
+    wstore.ncpong = nil
+    wstore.lcpong = nil
+    wstore.ncping = nil
+    wstore.lcping = nil
+    wstore.kdping = nil
+    wstore.kdpong = nil
+    wstore.commitQ = nil
+    wstore.accessQ = nil
 }

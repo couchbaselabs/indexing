@@ -1,50 +1,45 @@
 package main
 
 import (
-    "fmt"
-    "time"
-    "sort"
-    "os"
     "bytes"
-    "runtime/pprof"
     "flag"
+    "fmt"
     "github.com/couchbaselabs/indexing/btree"
+    "os"
+    "runtime/pprof"
+    "sort"
+    "time"
 )
 
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now());
+var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
 
 func main() {
     flag.Parse()
     args := flag.Args()
     idxfile, kvfile := args[0], args[1]
-    os.Remove(idxfile); os.Remove(kvfile)
-    cpuprof, _ := os.Create("cpuprof")
-    memprof, _ := os.Create("memprof")
+    os.Remove(idxfile)
+    os.Remove(kvfile)
 
     var conf = btree.Config{
         Idxfile: idxfile,
-        Kvfile: kvfile,
+        Kvfile:  kvfile,
         IndexConfig: btree.IndexConfig{
             Sectorsize: 512,
-            Flistsize: 1000 * btree.OFFSET_SIZE,
-            Blocksize: 512,
+            Flistsize:  1000 * btree.OFFSET_SIZE,
+            Blocksize:  512,
         },
-        Maxlevel: 6,
-        RebalanceThrs: 6,
-        AppendRatio: 0.7,
-        DrainRate: 200,
-        MaxLeafCache: 1000,
-        Sync: false,
-        Nocache: false,
+        Maxlevel:      6,
+        RebalanceThrs: 3,
+        AppendRatio:   0.7,
+        DrainRate:     200,
+        MaxLeafCache:  1000,
+        Sync:          false,
+        Nocache:       false,
     }
     bt := btree.NewBTree(btree.NewStore(conf))
-    factor := 1
+    factor := 10
     count := 10000
     seed := time.Now().UnixNano()
-
-    pprof.StartCPUProfile(cpuprof)
-    pprof.WriteHeapProfile(memprof)
-    defer pprof.StopCPUProfile()
 
     fmt.Println("Seed:", seed)
     keys, values := btree.TestData(10000, seed)
@@ -52,7 +47,7 @@ func main() {
     for i := 0; i < factor; i++ {
         for j := 0; j < count; j++ {
             k, v := keys[j], values[j]
-            k.Id = (i*count) + j
+            k.Id = (i * count) + j
             bt.Insert(k, v)
         }
         fmt.Println("Done ", time.Now().UnixNano()/1000000, (i+1)*count)
@@ -138,7 +133,7 @@ func containsEquals(bt *btree.BTree, count, factor int, keys []*btree.TestKey) {
     for i := 0; i < factor; i++ {
         for j := 0; j < count; j++ {
             key := *keys[j]
-            key.Id = (i*count) + j
+            key.Id = (i * count) + j
             if bt.Equals(&key) == false {
                 panic("Does not equal key")
             }
@@ -154,7 +149,8 @@ func containsEquals(bt *btree.BTree, count, factor int, keys []*btree.TestKey) {
 }
 
 func lookup(bt *btree.BTree, count, factor int, keys []*btree.TestKey,
-            values []*btree.TestValue) {
+    values []*btree.TestValue) {
+
     fmt.Println("Lookup")
     for i := 0; i < count; i++ {
         refvals := make([]string, 0)

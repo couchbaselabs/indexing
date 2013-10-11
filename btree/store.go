@@ -12,7 +12,7 @@
 //     free blocks.
 //
 // kv-file,
-//   contains key, value, docid bytes. They are always added in append 
+//   contains key, value, docid bytes. They are always added in append
 //   only mode, and a separate read-fd fetches them in random-access. Refer to
 //   appendkv.go for more information.
 
@@ -20,27 +20,25 @@ package btree
 
 import (
     "fmt"
-    "sync/atomic"
     "os"
+    "sync/atomic"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // constants that are relevant for index-file and kv-file
 const (
-    OFFSET_SIZE = 8                 // 64 bit offset
-    SECTOR_SIZE = 512               // Disk drive sector size in bytes.
-    FLIST_SIZE = 1024 * OFFSET_SIZE // default free list size in bytes.
-    BLOCK_SIZE = 1024 * 64          // default block size in bytes.
+    OFFSET_SIZE = 8                  // 64 bit offset
+    SECTOR_SIZE = 512                // Disk drive sector size in bytes.
+    FLIST_SIZE  = 1024 * OFFSET_SIZE // default free list size in bytes.
+    BLOCK_SIZE  = 1024 * 64          // default block size in bytes.
 )
 
 type Store struct {
     Config
     wstore *WStore  // Reference to write-store.
-    kvRfd *os.File  // Random read-only access for kv-file
-    idxRfd *os.File // Random read-only access for index-file
-    // Stats
-    loadCounts int64
+    kvRfd  *os.File // Random read-only access for kv-file.
+    idxRfd *os.File // Random read-only access for index-file.
 }
 
 //---- functions and receivers
@@ -52,7 +50,7 @@ func NewStore(conf Config) *Store {
         Config: conf,
         wstore: wstore,
         idxRfd: openRfd(conf.Idxfile),
-        kvRfd: openRfd(conf.Kvfile),
+        kvRfd:  openRfd(conf.Kvfile),
     }
     // TODO : Check whether index file is sane, both configuration and
     // freelist.
@@ -61,23 +59,27 @@ func NewStore(conf Config) *Store {
 
 // Close will release all resources maintained by store.
 func (store *Store) Close() {
-    store.kvRfd.Close(); store.kvRfd = nil
-    store.idxRfd.Close(); store.idxRfd = nil
-    store.wstore.CloseWStore(); store.wstore = nil
+    store.kvRfd.Close()
+    store.kvRfd = nil
+    store.idxRfd.Close()
+    store.idxRfd = nil
+    store.wstore.CloseWStore()
+    store.wstore = nil
 }
 
 // Destroy is opposite of Create, it cleans up the datafiles. Data files will
 // be deleted only when all references to WStore is removed.
 func (store *Store) Destroy() {
-    store.kvRfd.Close(); store.kvRfd = nil
-    store.idxRfd.Close(); store.idxRfd = nil
+    store.kvRfd.Close()
+    store.kvRfd = nil
+    store.idxRfd.Close()
+    store.idxRfd = nil
     // Close and destroy
     if store.wstore.CloseWStore() {
-        store.wstore.DestroyWStore();
+        store.wstore.DestroyWStore()
     }
     store.wstore = nil
 }
-
 
 // Fetch the root btree block from index-file. `transaction` must be true for
 // write access. It is assumed that there will be only one outstanding
@@ -91,15 +93,14 @@ func (store *Store) OpStart(transaction bool) (Node, *MV, int64) {
         store.wstore.translock <- true
         rootfpos := mvRoot(store)
         staleroot := store.FetchMVCache(rootfpos)
-        root = staleroot.copyOnWrite()
+        root = staleroot.copyOnWrite(store)
         mv = &MV{stales: []int64{rootfpos}, commits: []Node{root}}
-        //fmt.Println("roottrans", rootfpos, root.getKnode().fpos)
     } else {
         root = store.FetchNCache(store.currentRoot())
         mv = &MV{stales: []int64{}, commits: []Node{}}
-        //fmt.Println("root", root.getKnode().fpos)
     }
     mv.timestamp = ts
+    store.wstore.opCounts += 1
     return root, mv, ts
 }
 
@@ -123,15 +124,15 @@ func (store *Store) FetchNCache(fpos int64) Node {
     var node Node
     // Sanity check
     fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
-    if fpos < fpos_firstblock || (fpos - fpos_firstblock) % blocksize != 0 {
+    if fpos < fpos_firstblock || (fpos-fpos_firstblock)%blocksize != 0 {
         panic("Invalid fpos to fetch")
     }
     // Try to fetch from cache
     if node = store.wstore.ncacheLookup(fpos); node == nil {
+        store.wstore.MVloadCounts += 1
         node = store.FetchNode(fpos)
         store.wstore.ncache(node)
     }
-    node.getKnode().store = store // Super important !!
     return node
 }
 
@@ -144,17 +145,17 @@ func (store *Store) FetchMVCache(fpos int64) Node {
     var node Node
     // Sanity check
     fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
-    if fpos < fpos_firstblock || (fpos - fpos_firstblock) % blocksize != 0 {
+    if fpos < fpos_firstblock || (fpos-fpos_firstblock)%blocksize != 0 {
         panic("Invalid fpos to fetch")
     }
     // Try to fetch from commitQ
     if node = store.wstore.ccacheLookup(fpos); node == nil {
         // Try to fetch from cache
         if node = store.wstore.ncacheLookup(fpos); node == nil {
+            store.wstore.MVloadCounts += 1
             node = store.FetchNode(fpos)
         }
     }
-    node.getKnode().store = store // Super important !!
     return node
 }
 
@@ -165,14 +166,14 @@ func (store *Store) FetchNode(fpos int64) Node {
     if _, err := store.idxRfd.ReadAt(data, fpos); err != nil {
         panic(err.Error())
     }
-    b := (&block{}).newBlock(0, store.maxKeys()); b.gobDecode(data)
-    kn := knode{block:*b, store:store, fpos:fpos}
+    b := (&block{}).newBlock(0, store.maxKeys())
+    b.gobDecode(data)
+    kn := knode{block: *b, fpos: fpos}
     if b.isLeaf() {
         node = &kn
     } else {
-        node = &inode{knode:kn}
+        node = &inode{knode: kn}
     }
-    store.loadCounts += 1
     return node
 }
 
@@ -187,33 +188,37 @@ func calculateMaxKeys(blocksize int64) int64 {
 }
 
 func calculateMaxKeys_gob(blocksize int64) int64 {
-    max64 := int64(9223372036854775807-1)
-    start := int64(float64(blocksize-14) / (10.1875*3))
+    max64 := int64(9223372036854775807 - 1)
+    start := int64(float64(blocksize-14) / (10.1875 * 3))
     inc := int64(2)
     for i := start; ; {
-        b := (&block{leaf:TRUE}).newBlock(int(i), int(i))
+        b := (&block{leaf: TRUE}).newBlock(int(i), int(i))
         for j := int64(0); j < i; j++ {
-            b.ks[j] = max64; b.ds[j] = max64; b.vs[j] = max64
+            b.ks[j] = max64
+            b.ds[j] = max64
+            b.vs[j] = max64
         }
         if int64(len(b.gobEncode())) > blocksize {
             if inc > 4 {
-                i -= inc/2; inc = 2
+                i -= (inc / 2)
+                inc = 2
                 continue
             }
-            max :=  i-2
-            if max % 2 == 0 {   // fix max as even value.
+            max := (i - 2)
+            if (max % 2) == 0 { // fix max as even value.
                 return max
             }
-            return max-1
+            return max - 1
         }
-        i += inc; inc *= 2
+        i += inc
+        inc *= 2
     }
 }
 
 //---- local functions
 func openWfd(file string, flag int, perm os.FileMode) *os.File {
     if wfd, err := os.OpenFile(file, flag, perm); err != nil {
-        panic( err.Error() )
+        panic(err.Error())
     } else {
         return wfd
     }
@@ -221,7 +226,7 @@ func openWfd(file string, flag int, perm os.FileMode) *os.File {
 
 func openRfd(file string) *os.File {
     if rfd, err := os.Open(file); err != nil {
-        panic( err.Error() )
+        panic(err.Error())
     } else {
         return rfd
     }
@@ -245,6 +250,6 @@ func BlockCalculate(store *Store) {
     fi, _ := store.idxRfd.Stat()
     size := fi.Size()
     fmt.Println("size:", size)
-    count := (size - 1024 - (store.Flistsize*2)) / store.Blocksize
+    count := (size - 1024 - (store.Flistsize * 2)) / store.Blocksize
     fmt.Println("diskblocks:", count)
 }

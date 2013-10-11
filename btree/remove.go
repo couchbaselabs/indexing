@@ -4,12 +4,14 @@ import (
     "fmt"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // Return the mutated node along with a boolean that says whether a rebalance
 // is required or not.
-func (kn *knode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
-    index, equal := kn.searchEqual(key)
+func (kn *knode) remove(store *Store, key Key, mv *MV) (
+    Node, bool, int64, int64) {
+
+    index, equal := kn.searchEqual(store, key)
     mk, md := int64(-1), int64(-1)
     if equal == false {
         return kn, false, mk, md
@@ -31,11 +33,11 @@ func (kn *knode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
 
     // If first entry in the leaf node is always a separator key in
     // intermediate node.
-    if index == 0  &&  kn.size > 0 {
+    if index == 0 && kn.size > 0 {
         mk, md = kn.ks[0], kn.ds[0]
     }
 
-    if kn.size >= kn.store.RebalanceThrs {
+    if kn.size >= store.RebalanceThrs {
         return kn, false, mk, md
     }
     return kn, true, mk, md
@@ -43,19 +45,21 @@ func (kn *knode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
 
 // Return the mutated node along with a boolean that says whether a rebalance
 // is required or not.
-func (in *inode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
-    index, equal := in.searchEqual(key)
+func (in *inode) remove(store *Store, key Key, mv *MV) (
+    Node, bool, int64, int64) {
+
+    index, equal := in.searchEqual(store, key)
 
     // Copy on write
-    stalechild := in.store.FetchMVCache(in.vs[index])
-    child := stalechild.copyOnWrite()
+    stalechild := store.FetchMVCache(in.vs[index])
+    child := stalechild.copyOnWrite(store)
     mv.stales = append(mv.stales, stalechild.getKnode().fpos)
     mv.commits = append(mv.commits, child)
 
     // Recursive remove
-    child, rebalnc, mk, md := child.remove(key, mv)
+    child, rebalnc, mk, md := child.remove(store, key, mv)
     if equal {
-        if mk < 0  ||  md < 0 {
+        if mk < 0 || md < 0 {
             panic("separator cannot be less than zero")
         }
         if index < 1 {
@@ -77,31 +81,33 @@ func (in *inode) remove(key Key, mv *MV) (Node, bool, int64, int64) {
 
     // Try to rebalance from left, if there is a left node available.
     if rebalnc && (index > 0) {
-        left := in.store.FetchMVCache(in.vs[index-1])
+        left := store.FetchMVCache(in.vs[index-1])
         if canRebalance(child, left) {
-            node, index = in.rebalanceLeft(index, child, left, mv)
+            node, index = in.rebalanceLeft(store, index, child, left, mv)
         }
     }
     // Try to rebalance from right, if there is a right node available.
-    if rebalnc  &&  (index >= 0)  &&  (index+1 <= in.size) {
-        right := in.store.FetchMVCache(in.vs[index+1])
+    if rebalnc && (index >= 0) && (index+1 <= in.size) {
+        right := store.FetchMVCache(in.vs[index+1])
         if canRebalance(child, right) {
-            node, index = in.rebalanceRight(index, child, right, mv)
+            node, index = in.rebalanceRight(store, index, child, right, mv)
         }
     }
 
-    if node.getKnode().size >= in.store.RebalanceThrs {
+    if node.getKnode().size >= store.RebalanceThrs {
         return node, false, mk, md
     }
     return node, true, mk, md
 }
 
-func (in *inode) rebalanceLeft(index int, child Node, left Node, mv *MV) (Node, int) {
-    count := left.balance(child);
+func (in *inode) rebalanceLeft(store *Store, index int, child Node, left Node, mv *MV) (
+    Node, int) {
 
-    mk, md :=  in.ks[index-1], in.ds[index-1]
+    count := left.balance(store, child)
+
+    mk, md := in.ks[index-1], in.ds[index-1]
     if count == 0 { // We can merge with left child
-        _, stalenodes := left.mergeRight(child, mk, md)
+        _, stalenodes := left.mergeRight(store, child, mk, md)
         mv.stales = append(mv.stales, stalenodes...)
         if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
             mv.stales = append(mv.stales, in.fpos)
@@ -116,24 +122,26 @@ func (in *inode) rebalanceLeft(index int, child Node, left Node, mv *MV) (Node, 
             // left-child has to go
             copy(in.vs[index-1:], in.vs[index:])
             in.vs = in.vs[:len(in.ks)+1]
-            return in, index-1
+            return in, (index - 1)
         }
     } else {
         mv.stales = append(mv.stales, left.getKnode().fpos)
-        left := left.copyOnWrite()
+        left := left.copyOnWrite(store)
         mv.commits = append(mv.commits, left)
-        in.ks[index-1], in.ds[index-1] = left.rotateRight(child, count, mk, md)
+        in.ks[index-1], in.ds[index-1] = left.rotateRight(store, child, count, mk, md)
         in.vs[index-1] = left.getKnode().fpos
         return in, index
     }
 }
 
-func (in *inode) rebalanceRight(index int, child Node, right Node, mv *MV) (Node, int) {
-    count := right.balance(child)
+func (in *inode) rebalanceRight(store *Store, index int, child Node, right Node, mv *MV) (
+    Node, int) {
+
+    count := right.balance(store, child)
 
     mk, md := in.ks[index], in.ds[index]
     if count == 0 {
-        _, stalenodes := child.mergeLeft(right, mk, md)
+        _, stalenodes := child.mergeLeft(store, right, mk, md)
         mv.stales = append(mv.stales, stalenodes...)
         if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
             mv.stales = append(mv.stales, in.fpos)
@@ -152,31 +160,33 @@ func (in *inode) rebalanceRight(index int, child Node, right Node, mv *MV) (Node
         }
     } else {
         mv.stales = append(mv.stales, right.getKnode().fpos)
-        right := right.copyOnWrite()
+        right := right.copyOnWrite(store)
         mv.commits = append(mv.commits, right)
-        in.ks[index], in.ds[index] = child.rotateLeft(right, count, mk, md)
+        in.ks[index], in.ds[index] = child.rotateLeft(store, right, count, mk, md)
         in.vs[index+1] = right.getKnode().fpos
         return in, index
     }
 }
 
-func (from *knode) balance(to Node) int {
-    max := from.store.maxKeys()
+func (from *knode) balance(store *Store, to Node) int {
+    max := store.maxKeys()
     size := from.size + to.getKnode().size
-    if float64(size) < (float64(max) * float64(0.6)) {  // FIXME magic number ??
+    if float64(size) < (float64(max) * float64(0.6)) { // FIXME magic number ??
         return 0
     } else {
-        return (from.size - from.store.RebalanceThrs) / 2
+        return (from.size - store.RebalanceThrs) / 2
     }
 }
 
 // Merge `kn` into `other` Node, and return,
 //  - merged `other` node,
 //  - `kn` as stalenode
-func (kn *knode) mergeRight(othern Node, mk, md int64) (Node, []int64) {
+func (kn *knode) mergeRight(store *Store, othern Node, mk, md int64) (
+    Node, []int64) {
+
     other := othern.(*knode)
-    max := kn.store.maxKeys()
-    if kn.size + other.size >= max {
+    max := store.maxKeys()
+    if kn.size+other.size >= max {
         panic("We cannot merge knodes now. Combined size is greater")
     }
     other.ks = other.ks[:kn.size+other.size]
@@ -196,18 +206,20 @@ func (kn *knode) mergeRight(othern Node, mk, md int64) (Node, []int64) {
         panic("Bomb")
     }
 
-    kn.store.wstore.countMergeRight += 1
+    store.wstore.countMergeRight += 1
     return other, []int64{kn.fpos}
 }
 
 // rotate `count` entries from `left` node to child `n` node. Return the median
-func (left *knode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
+func (left *knode) rotateRight(store *Store, n Node, count int, mk, md int64) (
+    int64, int64) {
+
     child := n.(*knode)
     chlen, leftlen := len(child.ks), len(left.ks)
 
     // Move last `count` keys from left -> child.
-    child.ks = child.ks[:chlen+count]   // First expand
-    child.ds = child.ds[:chlen+count]   // First expand
+    child.ks = child.ks[:chlen+count] // First expand
+    child.ds = child.ds[:chlen+count] // First expand
     copy(child.ks[count:], child.ks[:chlen])
     copy(child.ds[count:], child.ds[:chlen])
     copy(child.ks[:count], left.ks[leftlen-count:])
@@ -231,17 +243,19 @@ func (left *knode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
     }
 
     // Return the median
-    child.store.wstore.countRotateRight += 1
+    store.wstore.countRotateRight += 1
     return child.ks[0], child.ds[0]
 }
 
 // Merge `other` into `kn` Node, and return,
 //  - merged `kn` node,
 //  - `other` as stalenode
-func (kn *knode) mergeLeft(othern Node, mk, md int64) (Node, []int64) {
+func (kn *knode) mergeLeft(store *Store, othern Node, mk, md int64) (
+    Node, []int64) {
+
     other := othern.(*knode)
-    max := kn.store.maxKeys()
-    if kn.size + other.size >= max {
+    max := store.maxKeys()
+    if kn.size+other.size >= max {
         panic("We cannot merge knodes now. Combined size is greater")
     }
     kn.ks = kn.ks[:kn.size+other.size]
@@ -258,18 +272,20 @@ func (kn *knode) mergeLeft(othern Node, mk, md int64) (Node, []int64) {
         panic("Bomb")
     }
 
-    kn.store.wstore.countMergeLeft += 1
+    store.wstore.countMergeLeft += 1
     return kn, []int64{other.fpos}
 }
 
 // rotate `count` entries from right `n` node to `child` node. Return median
-func (child *knode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
+func (child *knode) rotateLeft(store *Store, n Node, count int, mk, md int64) (
+    int64, int64) {
+
     right := n.(*knode)
     chlen := len(child.ks)
 
     // Move first `count` keys from right -> child.
-    child.ks = child.ks[:chlen+count]  // First expand
-    child.ds = child.ds[:chlen+count]  // First expand
+    child.ks = child.ks[:chlen+count] // First expand
+    child.ds = child.ds[:chlen+count] // First expand
     copy(child.ks[chlen:], right.ks[:count])
     copy(child.ds[chlen:], right.ds[:count])
     // Don't blindly shrink right keys
@@ -281,7 +297,7 @@ func (child *knode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
     right.size, child.size = len(right.ks), len(child.ks)
 
     // Move last count values from right -> child
-    child.vs = child.vs[:chlen+count+1]    // First expand
+    child.vs = child.vs[:chlen+count+1] // First expand
     copy(child.vs[chlen:], right.vs[:count])
     child.vs[chlen+count] = 0
     // Don't blinldy shrink right values
@@ -289,21 +305,23 @@ func (child *knode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
     right.vs = right.vs[:len(right.vs)-count]
 
     //Debug
-    if (len(child.vs) != len(child.ks)+1) {
+    if len(child.vs) != len(child.ks)+1 {
         panic("Bomb")
     }
 
     // Return the median
-    child.store.wstore.countRotateLeft += 1
+    store.wstore.countRotateLeft += 1
     return right.ks[0], right.ds[0]
 }
 
 // Merge `in` into `other` Node, and return,
 //  - merged `other` node,
 //  - `in` as stalenode
-func (in *inode) mergeRight(othern Node, mk, md int64) (Node, []int64) {
+func (in *inode) mergeRight(store *Store, othern Node, mk, md int64) (
+    Node, []int64) {
+
     other := othern.(*inode)
-    max := in.store.maxKeys()
+    max := store.maxKeys()
     if (in.size + other.size + 1) >= max {
         panic("We cannot merge inodes now. Combined size is greater")
     }
@@ -320,20 +338,22 @@ func (in *inode) mergeRight(othern Node, mk, md int64) (Node, []int64) {
     copy(other.vs[:in.size+1], in.vs)
     other.size = len(other.ks)
 
-    in.store.wstore.countMergeRight += 1
+    store.wstore.countMergeRight += 1
     return other, []int64{in.fpos}
 }
 
 // rotate `count` entries from `left` node to child `n` node. Return the median
-func (left *inode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
+func (left *inode) rotateRight(store *Store, n Node, count int, mk, md int64) (
+    int64, int64) {
+
     child := n.(*inode)
     left.ks = append(left.ks, mk)
     left.ds = append(left.ds, md)
     chlen, leftlen := len(child.ks), len(left.ks)
 
     // Move last `count` keys from left -> child.
-    child.ks = child.ks[:chlen+count]   // First expand
-    child.ds = child.ds[:chlen+count]   // First expand
+    child.ks = child.ks[:chlen+count] // First expand
+    child.ds = child.ds[:chlen+count] // First expand
     copy(child.ks[count:], child.ks[:chlen])
     copy(child.ds[count:], child.ds[:chlen])
     copy(child.ks[:count], left.ks[leftlen-count:])
@@ -355,16 +375,18 @@ func (left *inode) rotateRight(n Node, count int, mk, md int64) (int64, int64) {
     left.ds = left.ds[:left.size-1]
     left.size = len(left.ks)
     // Return the median
-    child.store.wstore.countRotateRight += 1
+    store.wstore.countRotateRight += 1
     return mk, md
 }
 
 // Merge `other` into `in` Node, and return,
 //  - merged `in` node,
 //  - `other` as stalenode
-func (in *inode) mergeLeft(othern Node, mk, md int64) (Node, []int64) {
+func (in *inode) mergeLeft(store *Store, othern Node, mk, md int64) (
+    Node, []int64) {
+
     other := othern.(*inode)
-    max := in.store.maxKeys()
+    max := store.maxKeys()
     if (in.size + other.size + 1) >= max {
         panic("We cannot merge inodes now. Combined size is greater")
     }
@@ -378,12 +400,14 @@ func (in *inode) mergeLeft(othern Node, mk, md int64) (Node, []int64) {
     copy(in.vs[in.size+1:], other.vs[:other.size+1])
     in.size = len(in.ks)
 
-    in.store.wstore.countMergeLeft += 1
+    store.wstore.countMergeLeft += 1
     return in, []int64{other.fpos}
 }
 
 // rotate `count` entries from right `n` node to `child` node. Return median
-func (child *inode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
+func (child *inode) rotateLeft(store *Store, n Node, count int, mk, md int64) (
+    int64, int64) {
+
     right := n.(*inode)
     child.ks = append(child.ks, mk)
     child.ds = append(child.ds, md)
@@ -391,8 +415,8 @@ func (child *inode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
     rlen := len(right.ks)
 
     // Move first `count` keys from right -> child.
-    child.ks = child.ks[:chlen+count]  // First expand
-    child.ds = child.ds[:chlen+count]  // First expand
+    child.ks = child.ks[:chlen+count] // First expand
+    child.ds = child.ds[:chlen+count] // First expand
     copy(child.ks[chlen:], right.ks[:count])
     copy(child.ds[chlen:], right.ds[:count])
     // Don't blindly shrink right keys
@@ -416,7 +440,7 @@ func (child *inode) rotateLeft(n Node, count int, mk, md int64) (int64, int64) {
     child.ds = child.ds[:child.size-1]
     child.size = len(child.ks)
     // Return the median
-    child.store.wstore.countRotateLeft += 1
+    store.wstore.countRotateLeft += 1
     return mk, md
 }
 

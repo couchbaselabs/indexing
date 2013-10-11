@@ -7,7 +7,7 @@ import (
     "testing"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 var datafile = "./data/appendkv_datafile.dat"
 
 func Test_KV(t *testing.T) {
@@ -24,6 +24,7 @@ func Test_KV(t *testing.T) {
 
 var fposs = make([]int64, 0)
 var maxEntries = 100000
+
 func Benchmark_appendKV(b *testing.B) {
     store := testStore(true)
     defer func() {

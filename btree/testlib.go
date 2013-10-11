@@ -2,36 +2,36 @@
 package btree
 
 import (
-    "os"
-    "fmt"
-    "bytes"
-    "math/rand"
-    "time"
     "bufio"
+    "bytes"
+    "fmt"
+    "math/rand"
+    "os"
+    "time"
 )
 
 var _ = fmt.Sprintln(time.Now())
 
 var testconf1 = Config{
     Idxfile: "./data/index_datafile.dat",
-    Kvfile: "./data/appendkv_datafile.dat",
+    Kvfile:  "./data/appendkv_datafile.dat",
     IndexConfig: IndexConfig{
         Sectorsize: 512,
-        Flistsize: 1000 * OFFSET_SIZE,
-        Blocksize: 64*1024,
+        Flistsize:  1000 * OFFSET_SIZE,
+        Blocksize:  64 * 1024,
     },
-    Maxlevel: 6,
+    Maxlevel:      6,
     RebalanceThrs: 6,
-    AppendRatio: 0.7,
-    DrainRate: 10,
-    MaxLeafCache: 1000,
-    Sync: false,
-    Nocache: false,
+    AppendRatio:   0.7,
+    DrainRate:     10,
+    MaxLeafCache:  1000,
+    Sync:          false,
+    Nocache:       false,
 }
 
 type TestKey struct {
-    K string
-    Id int
+    K   string
+    Id  int
 }
 type TestValue struct {
     V string
@@ -45,26 +45,14 @@ func (tk *TestKey) Docid() []byte {
     return []byte(fmt.Sprintf("%020v", tk.Id))
 }
 
-func (tk *TestKey) Control() uint32 {
-    return 0
-}
-
 func (tk *TestKey) CompareLess(s *Store, kfp, dfp int64, isD bool) (int, int64, int64) {
     var otherk, otherd []byte
     var cmp int
 
-    if Debug {
-        fmt.Println("GE", string(tk.Bytes()), kfp, dfp)
-    }
     otherk = s.fetchKey(kfp)
-    if Debug {
-        fmt.Println("GE-", string(tk.Bytes()), string(otherk))
-    }
     // Compare
     if cmp = bytes.Compare(tk.Bytes(), otherk); cmp == 0 && isD {
-        if isD {
-            otherd = s.fetchKey(dfp)
-        }
+        otherd = s.fetchKey(dfp)
         cmp = bytes.Compare(tk.Docid(), otherd)
         if cmp == 0 {
             return cmp, kfp, dfp
@@ -107,7 +95,7 @@ func TestData(count int, seed int64) ([]*TestKey, []*TestValue) {
     values := make([]*TestValue, 0, count)
     for i := 0; i < count; i++ {
         keys = append(keys, &TestKey{RandomKey(rnd), i})
-        values = append(values, &TestValue{RandomValue(rnd)+"Value"})
+        values = append(values, &TestValue{RandomValue(rnd) + "Value"})
     }
     return keys, values
 }
@@ -121,6 +109,7 @@ func testStore(remove bool) *Store {
 }
 
 var keys = make([]string, 0)
+
 func RandomKey(rnd *rand.Rand) string {
     if len(keys) == 0 {
         fd, _ := os.Open("./data/words")

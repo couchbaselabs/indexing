@@ -1,6 +1,7 @@
 // Manages head sector of btree index-file. Head sector contains the following
 // items,
 //      rootFileposition int64
+//      timestamp int64
 //      sectorsize int64
 //      flistsize int64
 //      blocksize int64
@@ -11,40 +12,41 @@
 package btree
 
 import (
-    "encoding/binary"
-    "os"
-    "fmt"
     "bytes"
+    "encoding/binary"
+    "fmt"
+    "os"
 )
 
-var _ = fmt.Sprintln("keep 'fmt' import during debugging");
+var _ = fmt.Sprintln("keep 'fmt' import during debugging")
 
 // Structure to manage the head sector
 type Head struct {
-    wstore *WStore
-    dirty bool       // tells whether `root` has side-effects
-    pick int64       // either 0 or 1, which freelist to pick. NOT USED !!
-    sectorsize int64 // head sector-size in bytes.
-    flistsize int64  // free-list size in bytes.
-    blocksize int64  // btree block size in bytes.
-    maxkeys int64    // Maximum number of keys that can be store in btree block.
-    root int64       // file-offset into index file that has root block
-    timestamp int64  // snapshot's timestamp is synced with disk aswell.
+    wstore     *WStore
+    dirty      bool  // tells whether `root` has side-effects
     fpos_head1 int64 // file-offset into index file where 1st-head is
     fpos_head2 int64 // file-offset into index file where 2nd-head is
-    crc uint32       // CRC value for head sector + freelist block
+    // Following fields are persisted on disk.
+    root       int64  // file-offset into index file that has root block
+    timestamp  int64  // snapshot's timestamp is synced with disk aswell.
+    sectorsize int64  // head sector-size in bytes.
+    flistsize  int64  // free-list size in bytes.
+    blocksize  int64  // btree block size in bytes.
+    maxkeys    int64  // Maximum number of keys can be store in btree block.
+    pick       int64  // either 0 or 1, which freelist to pick. NOT USED !!
+    crc        uint32 // CRC value for head sector + freelist block
 }
 
 // Create a new Head sector structure.
 func newHead(wstore *WStore) *Head {
-    hd := Head {
-        wstore: wstore,
-        pick: 0,
+    hd := Head{
+        wstore:     wstore,
+        pick:       0,
         sectorsize: wstore.Sectorsize,
-        flistsize: wstore.Flistsize,
-        blocksize: wstore.Blocksize,
-        dirty: false,
-        root: 0,
+        flistsize:  wstore.Flistsize,
+        blocksize:  wstore.Blocksize,
+        dirty:      false,
+        root:       0,
         fpos_head1: 0,
         fpos_head2: wstore.Sectorsize,
     }
@@ -80,19 +82,19 @@ func (hd *Head) fetch() bool {
     if err := binary.Read(rfd, LittleEndian, &hd.sectorsize); err != nil {
         panic("Unable to read sectorsize from first head sector")
     }
-    if err:= binary.Read(rfd, LittleEndian, &hd.flistsize); err != nil {
+    if err := binary.Read(rfd, LittleEndian, &hd.flistsize); err != nil {
         panic("Unable to read flistsize from first head sector")
     }
-    if err:= binary.Read(rfd, LittleEndian, &hd.blocksize); err != nil {
+    if err := binary.Read(rfd, LittleEndian, &hd.blocksize); err != nil {
         panic("Unable to read blocksize from first head sector")
     }
-    if err:= binary.Read(rfd, LittleEndian, &hd.maxkeys); err != nil {
+    if err := binary.Read(rfd, LittleEndian, &hd.maxkeys); err != nil {
         panic("Unable to read maxkeys from first head sector")
     }
-    if err:= binary.Read(rfd, LittleEndian, &hd.pick); err != nil {
+    if err := binary.Read(rfd, LittleEndian, &hd.pick); err != nil {
         panic("Unable to read pick from first head sector")
     }
-    if err:= binary.Read(rfd, LittleEndian, &hd.crc); err != nil {
+    if err := binary.Read(rfd, LittleEndian, &hd.crc); err != nil {
         panic("Unable to read crc from first head sector")
     }
 
@@ -128,14 +130,14 @@ func (hd *Head) flush(crc uint32) *Head {
     hd.crc = crc
 
     buf := bytes.NewBuffer([]byte{})
-    binary.Write(buf, LittleEndian, &hd.root);
-    binary.Write(buf, LittleEndian, &hd.timestamp);
-    binary.Write(buf, LittleEndian, &hd.sectorsize);
-    binary.Write(buf, LittleEndian, &hd.flistsize);
-    binary.Write(buf, LittleEndian, &hd.blocksize);
-    binary.Write(buf, LittleEndian, &hd.maxkeys);
-    binary.Write(buf, LittleEndian, &hd.pick);
-    binary.Write(buf, LittleEndian, &hd.crc);
+    binary.Write(buf, LittleEndian, &hd.root)
+    binary.Write(buf, LittleEndian, &hd.timestamp)
+    binary.Write(buf, LittleEndian, &hd.sectorsize)
+    binary.Write(buf, LittleEndian, &hd.flistsize)
+    binary.Write(buf, LittleEndian, &hd.blocksize)
+    binary.Write(buf, LittleEndian, &hd.maxkeys)
+    binary.Write(buf, LittleEndian, &hd.pick)
+    binary.Write(buf, LittleEndian, &hd.crc)
 
     valb := buf.Bytes()
     wfd.WriteAt(valb, hd.fpos_head2) // Write into head sector2

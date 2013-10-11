@@ -5,18 +5,16 @@ import (
     "time"
 )
 
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now());
+var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
 
 type IO struct {
-    mvQ []*MV
+    mvQ     []*MV
     commitQ map[int64]Node
 }
 
 func mvRoot(store *Store) int64 {
     wstore := store.wstore
-    //fmt.Println("mvRoot", wstore.mvQ)
     if len(wstore.mvQ) > 0 {
-        //fmt.Println("mvRoot", wstore.mvQ[len(wstore.mvQ)-1].root)
         return wstore.mvQ[len(wstore.mvQ)-1].root
     } else {
         return store.currentRoot()
@@ -36,14 +34,14 @@ func (wstore *WStore) commit(mv *MV, minAccess int64, force bool) {
         for _, node := range mv.commits {
             wstore.commitQ[node.getKnode().fpos] = node
         }
-        wstore.pingMV(mv)
+        wstore.postMV(mv)
         wstore.mvQ = append(wstore.mvQ, mv)
     }
     if force || len(wstore.mvQ) > wstore.DrainRate {
         wstore.syncSnapshot(minAccess)
         wstore.commitQ = make(map[int64]Node)
     }
-    if force == false  &&  len(wstore.freelist.offsets) < (wstore.Maxlevel*2) {
+    if force == false && len(wstore.freelist.offsets) < (wstore.Maxlevel*2) {
         offsets := wstore.appendBlocks(0, wstore.appendCount())
         wstore.freelist.add(offsets)
     }

@@ -1,24 +1,27 @@
+// MVCC controller process.
 package btree
 
 import (
-    "time"
     "fmt"
+    "time"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
-const(
+const (
     WS_SAYHI byte = iota
-    WS_CLOSE         // {WS_CLOSE}
+    WS_CLOSE      // {WS_CLOSE}
+
     // messages to mvcc goroutine
-    WS_ACCESS        // {WS_ACCESS} -> timestamp int64
-    WS_RELEASE       // {WS_RELEASE, timestamp} -> minAccess int64
-    WS_SETSNAPSHOT   // {WS_SETSNAPSHOT, offsets []int64, root int64, timestamp int64}
+    WS_ACCESS      // {WS_ACCESS} -> timestamp int64
+    WS_RELEASE     // {WS_RELEASE, timestamp} -> minAccess int64
+    WS_SETSNAPSHOT // {WS_SETSNAPSHOT, offsets []int64, root int64, timestamp int64}
+
     // messages to defer routine
-    WS_PINGCACHE     // {WS_PINGCACHE, what byte, fpos int64, node Node}
-    WS_PINGKD        // {WS_PINGKD, fpos int64, key []byte}
-    WS_MV            // {WS_MV, mv *MV}
-    WS_SYNCSNAPSHOT  // {WS_MV, minAccess int64}
+    WS_PINGCACHE    // {WS_PINGCACHE, what byte, fpos int64, node Node}
+    WS_PINGKD       // {WS_PINGKD, fpos int64, key []byte}
+    WS_MV           // {WS_MV, mv *MV}
+    WS_SYNCSNAPSHOT // {WS_MV, minAccess int64}
 )
 
 const (
@@ -28,20 +31,16 @@ const (
 )
 
 type ReclaimData struct {
-    fpos int64 // Node file position that needs to be reclaimed to free-list
+    fpos      int64 // Node file position that needs to be reclaimed to free-list
     timestamp int64 // transaction timestamp under which fpos became stale.
 }
 type RecycleData ReclaimData
 
 type MVCC struct {
-    // MVCC !
-    accessQ []int64        // sorted slice of timestamps
-
-    // Communication channel for MVCC goroutine.
-    req chan []interface{}
-    res chan []interface{}
-    // transaction channel
-    translock chan bool
+    accessQ   []int64            // sorted slice of timestamps
+    req       chan []interface{} // Communication channel for MVCC goroutine.
+    res       chan []interface{}
+    translock chan bool // transaction channel
 }
 
 func (wstore *WStore) access() int64 {
@@ -97,13 +96,16 @@ func doMVCC(wstore *WStore) {
 func (wstore *WStore) closeChannels() {
     wstore.req <- []interface{}{WS_CLOSE}
     <-wstore.res
-    close(wstore.req); wstore.req = nil
-    close(wstore.res); wstore.res = nil
+    close(wstore.req)
+    wstore.req = nil
+    close(wstore.res)
+    wstore.res = nil
 
     syncChan := make(chan interface{})
     wstore.deferReq <- []interface{}{WS_CLOSE, syncChan}
     <-syncChan
-    close(wstore.deferReq); wstore.deferReq = nil
+    close(wstore.deferReq)
+    wstore.deferReq = nil
 }
 
 // Demark the timestamp to zero in accessQ and return the minimum value of
@@ -118,7 +120,7 @@ func (wstore *WStore) minAccess(demarkts int64) int64 {
         } else if ts == demarkts {
             wstore.accessQ[i] = 0
             skip += 1
-        } else {
+        } else if ts > demarkts {
             break
         }
     }

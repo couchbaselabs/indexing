@@ -204,12 +204,11 @@ and timestamping.
 
 - once the write transaction is complete an MVCC insert or delete will
   generate a collection of copied-and-modifed btree nodes and a collection
-  of stalenodes.
+  of stalenodes - called a snapshot.
 
-- after an MVCC transaction, the root node and its corresponding on-disk file
-  position also changes leading to a new snapshot of the btree. This snapshot
-  can be immediately flushed into the disk or we can accumulate these snapshots
-  in memory.
+- after an MVCC transaction, the new snapshot generates a new root node with a
+  new file position on-the-disk. The snapshot can be immediately flushed into
+  the disk or we can accumulate these snapshots in memory.
 
 - typically MVCC snapshots are accumulated in memory and periodically flushed
   into the disk based on number of transactions, read-your-own-write triggers
@@ -237,7 +236,7 @@ and timestamping.
   stale nodes that are still referred by outstanding reads will be reclaimed
   during next flush.
 
-A note on stale block reclamation,
+A note on stale block reclamation (out-dated FIXME),
 
   Flushing a disk snapshot will happen only after a write access is released.
 

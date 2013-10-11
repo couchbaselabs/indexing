@@ -5,7 +5,7 @@ import (
     "testing"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 func Benchmark_gobenc(b *testing.B) {
     store := testStore(true)

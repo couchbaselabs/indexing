@@ -11,17 +11,18 @@ func (store *Store) check() bool {
 
     // Check whether configuration settings match.
     fi, _ := rfd.Stat()
-    blksize := fi.Size() - (wstore.Sectorsize*2) - (wstore.Flistsize*2)
-    if ((wstore.Sectorsize*2) + (wstore.Flistsize*2)) != wstore.fpos_firstblock{
+    fpos_firstblock := (wstore.Sectorsize * 2) - (wstore.Flistsize * 2)
+    blksize := fi.Size() - fpos_firstblock
+    if fpos_firstblock != wstore.fpos_firstblock {
         return false
     }
-    if blksize % int64(wstore.Blocksize) != 0 {
+    if blksize%int64(wstore.Blocksize) != 0 {
         return false
     }
 
     // Check freelist with btree.
     root, _, _ := store.OpStart(false)
-    offs := root.listOffsets()
+    offs := root.listOffsets(store)
     qsortOffsets(offs)
     fulloffs := seq(wstore.fpos_firstblock, fi.Size(), int64(wstore.Blocksize))
     offsets := make([]int64, 0, len(fulloffs))
@@ -93,4 +94,3 @@ func seq(start, end, step int64) []int64 {
     }
     return out
 }
-

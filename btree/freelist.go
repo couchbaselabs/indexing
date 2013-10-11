@@ -2,40 +2,42 @@
 package btree
 
 import (
+    "bytes"
     "encoding/binary"
     "fmt"
-    "bytes"
     "hash/crc32"
     "os"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // Structure to manage the free list
 type FreeList struct {
-    wstore *WStore
-    dirty bool        // Tells whether `freelist` contain side-effects
+    wstore      *WStore
+    dirty       bool  // Tells whether `freelist` contain side-effects
     fpos_block1 int64 // file-offset into index file where 1st-list is
     fpos_block2 int64 // file-offset into index file where 2nd-list is
-    offsets []int64   // array(slice) of free blocks
+    // Following fields are persisted on disk.
+    offsets []int64 // array(slice) of free blocks
 }
 
 var crctab = crc32.MakeTable(crc32.IEEE)
 
 // Create a new FreeList structure
 func newFreeList(wstore *WStore) *FreeList {
-    fl := FreeList {
-        wstore: wstore,
-        dirty: false,
-        fpos_block1: wstore.Sectorsize*2,
+    max := wstore.maxFreeBlocks()
+    fl := FreeList{
+        wstore:      wstore,
+        dirty:       false,
+        fpos_block1: wstore.Sectorsize * 2,
         fpos_block2: wstore.Sectorsize*2 + wstore.Flistsize,
-        offsets: make([]int64, 1, wstore.maxFreeBlocks()),  // lastblock is zero
+        offsets:     make([]int64, 1, max), // lastblock is zero
     }
     return &fl
 }
 
 // Clone `fl` to `newfl` with new array of offsets.
-func (fl *FreeList) clone() *FreeList{
+func (fl *FreeList) clone() *FreeList {
     newfl := newFreeList(fl.wstore)
     newfl.dirty = fl.dirty
     newfl.offsets = newfl.offsets[:len(fl.offsets)]
@@ -43,7 +45,7 @@ func (fl *FreeList) clone() *FreeList{
     return newfl
 }
 
-// Fetch list of free blocks from index file. 
+// Fetch list of free blocks from index file.
 func (fl *FreeList) fetch(crc uint32) bool {
     var fpos int64
     if fl.dirty {

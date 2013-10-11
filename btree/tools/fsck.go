@@ -1,15 +1,15 @@
 package main
 
 import (
+    "bytes"
+    "encoding/binary"
     "flag"
     "fmt"
-    "bytes"
+    "github.com/couchbaselabs/indexing/btree"
     "os"
-    "encoding/binary"
-    //"github.com/couchbaselabs/indexing/btree"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging");
+var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 func main() {
     flag.Parse()
@@ -17,8 +17,7 @@ func main() {
     rfd, _ := os.Open(args[0])
 
     rfd.Seek(0, os.SEEK_SET)
-    root, sectorsize, flistsize, blocksize, maxkeys, pick, crc :=
-            readHead(rfd)
+    root, sectorsize, flistsize, blocksize, maxkeys, pick, crc := readHead(rfd)
     fmt.Printf("Root       : %v\n", root)
     fmt.Printf("Sectorsize : %v\n", sectorsize)
     fmt.Printf("Flistsize  : %v\n", flistsize)
