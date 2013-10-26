@@ -9,7 +9,9 @@
 package btree
 
 import (
+    "log"
     "fmt"
+    "time"
 )
 
 // Sub-structure to `Config` structure.
@@ -51,11 +53,17 @@ type Config struct {
     // `MaxLeafCache` limits the number of leaf nodes to be cached.
     MaxLeafCache int
 
+    // MVCC throttle rate in milliseconds
+    MVCCThrottleRate time.Duration
+
     // enables O_SYNC flag for indexfile and kvfile.
     Sync bool
 
     // enables O_DIRECT flag for indexfile and kvfile.
     Nocache bool
+
+    // Debug
+    Debug bool
 }
 
 // btree instance. Typical usage, where `conf` is Config structure.
@@ -119,7 +127,7 @@ type Indexer interface {
     Check()      // check the btree data structure for anamolies.
     Show()       // displays in-memory btree structure on stdout.
     ShowKeys()   // list keys and docids inside the tree.
-    Stats()      // display statistics so far.
+    Stats(bool)  // display statistics so far.
     LevelCount() // count number of inodes, knodes and number of entries.
 }
 
@@ -201,7 +209,7 @@ func (bt *BTree) Insert(k Key, v Value) bool {
         in.vs[1] = spawn.getKnode().fpos
         in.vs = in.vs[:2]
 
-        mv.commits = append(mv.commits, in)
+        mv.commits[in.fpos] = in
         root = in
     }
     mv.root = root.getKnode().fpos
@@ -294,12 +302,12 @@ func (bt *BTree) ValueSet() <-chan []byte {
 func (bt *BTree) Lookup(key Key) chan []byte {
     c := make(chan []byte)
     go func() {
-        root, mv, timestamp := bt.store.OpStart(false)
+        root, _, timestamp := bt.store.OpStart(false)
         root.lookup(bt.store, key, func(val []byte) {
             c <- val
         })
         close(c)
-        bt.store.OpEnd(false, mv, timestamp)
+        bt.store.OpEnd(false, nil, timestamp)
     }()
     return c
 }
@@ -323,10 +331,29 @@ func (bt *BTree) Drain() {
 }
 
 func (bt *BTree) Check() {
-    root, mv, timestamp := bt.store.OpStart(false)
-    root.check(bt.store)
+    root, _, timestamp := bt.store.OpStart(false)
+    if bt.store.Debug {
+        log.Println("Check access", root.getKnode().fpos, timestamp)
+    }
+    log.Println("Checking btree ... root:", root.getKnode().fpos)
+    wstore := bt.store.wstore
+    if bt.store.Debug {
+        log.Printf(
+            "mvQ:   %10v     commitQ:      %10v\n",
+            wstore.mvQ, wstore.commitQ,
+        )
+        log.Printf(
+            "head-root:     %10v      head-ts:   %10v\n",
+            wstore.head.root, wstore.head.timestamp,
+        )
+    }
+    c := CheckContext{nodepath: make([]int64, 0)}
+    root.check(bt.store, &c)
     root.checkSeparator(bt.store, make([]int64, 0))
-    bt.store.OpEnd(false, mv, timestamp)
+    bt.store.OpEnd(false, nil, timestamp)
+    if bt.store.Debug {
+        log.Println("Check end", timestamp)
+    }
 }
 
 func (bt *BTree) Show() {
@@ -345,7 +372,7 @@ func (bt *BTree) ShowKeys() {
     bt.store.OpEnd(false, mv, timestamp)
 }
 
-func (bt *BTree) Stats() {
+func (bt *BTree) Stats(check bool) {
     store := bt.store
     wstore := store.wstore
     currentStales := make([]int64, 0, 100)
@@ -365,9 +392,12 @@ func (bt *BTree) Stats() {
         wstore.commitHits, wstore.popCounts, wstore.maxlenAccessQ,
     )
     fmt.Printf(
-        "reclaimed:    %10v    recycled:   %10v   commitQ: %-10v mvQ:%-10v\n",
+        "reclaimed:    %10v    recycled:   %10v    commitQ:       %10v\n",
         wstore.reclaimCount, wstore.recycleCount, len(wstore.commitQ),
-        len(wstore.mvQ),
+    )
+    fmt.Printf(
+        "mvQ:          %10v    maxlenMVQ:  %10v\n",
+        len(wstore.mvQ), wstore.maxlenMVQ,
     )
     fmt.Printf(
         "appendCounts: %10v    flushHeads: %10v    flushFreelists:%10v\n",
@@ -385,6 +415,9 @@ func (bt *BTree) Stats() {
         "garbageBlocks:%10v      freelist: %10v    opCount:       %10v\n",
         wstore.garbageBlocks, len(wstore.freelist.offsets), wstore.opCounts,
     )
+    if check {
+        bt.Check()
+    }
     // Level counts
     acc, icount, kcount := bt.LevelCount()
     fmt.Println("Levels :", acc, icount, kcount)
@@ -394,7 +427,7 @@ func (bt *BTree) LevelCount() ([]int64, int64, int64) {
     root, mv, timestamp := bt.store.OpStart(false)
     acc := make([]int64, 0, 16)
     acc, icount, kcount := root.levelCount(bt.store, 0, acc, 0, 0)
-    ln := int64(len(bt.store.wstore.freelist.offsets))
+    ln := int64(len(bt.store.wstore.freelist.offsets)-1)
     fmt.Println("Blocks: ", icount+kcount+ln)
     bt.store.OpEnd(false, mv, timestamp)
     return acc, icount, kcount

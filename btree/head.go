@@ -14,11 +14,8 @@ package btree
 import (
     "bytes"
     "encoding/binary"
-    "fmt"
     "os"
 )
-
-var _ = fmt.Sprintln("keep 'fmt' import during debugging")
 
 // Structure to manage the head sector
 type Head struct {
@@ -117,8 +114,8 @@ func (hd *Head) fetch() bool {
 // chain has to be re-added.
 func (hd *Head) setRoot(fpos int64, timestamp int64) *Head {
     hd.root = fpos
-    hd.dirty = true
     hd.timestamp = timestamp
+    hd.dirty = true
     return hd
 }
 

@@ -2,11 +2,9 @@
 package btree
 
 import (
-    "fmt"
-    "time"
+    "log"
+    //"time"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 const (
     WS_SAYHI byte = iota
@@ -39,33 +37,33 @@ type RecycleData ReclaimData
 type MVCC struct {
     accessQ   []int64            // sorted slice of timestamps
     req       chan []interface{} // Communication channel for MVCC goroutine.
-    res       chan []interface{}
     translock chan bool // transaction channel
 }
 
-func (wstore *WStore) access() int64 {
-    wstore.req <- []interface{}{WS_ACCESS}
-    return (<-wstore.res)[0].(int64)
+func (wstore *WStore) access(transaction bool) (int64, int64) {
+    res := make(chan []interface{})
+    wstore.req <- []interface{}{WS_ACCESS, transaction, res}
+    rets := <-res
+    ts, rootfpos := rets[0].(int64), rets[1].(int64)
+    return ts, rootfpos
 }
 
 func (wstore *WStore) release(timestamp int64) int64 {
-    wstore.req <- []interface{}{WS_RELEASE, timestamp}
-    minAccess := (<-wstore.res)[0].(int64)
+    res := make(chan []interface{})
+    wstore.req <- []interface{}{WS_RELEASE, timestamp, res}
+    minAccess := (<-res)[0].(int64)
     return minAccess
 }
 
-func (wstore *WStore) setSnapShot(offsets []int64, root, timestamp int64) {
-    wstore.req <- []interface{}{WS_SETSNAPSHOT, offsets, root, timestamp}
-    <-wstore.res
-}
-
-func (wstore *WStore) close() {
-    wstore.req <- []interface{}{WS_CLOSE}
-    <-wstore.res
+func (wstore *WStore) setSnapShot(offsets []int64, mvroot, mvts int64) {
+    res := make(chan []interface{})
+    wstore.req <- []interface{}{WS_SETSNAPSHOT, offsets, mvroot, mvts, res}
+    <-res
 }
 
 func doMVCC(wstore *WStore) {
-    req, res := wstore.req, wstore.res
+    req := wstore.req
+    tscount := wstore.head.timestamp
     for {
         cmd := <-req
         if cmd == nil {
@@ -73,35 +71,47 @@ func doMVCC(wstore *WStore) {
         }
         switch cmd[0].(byte) {
         case WS_SAYHI: // say hi!
+            res := cmd[1].(chan []interface{})
             res <- []interface{}{WS_SAYHI}
         case WS_ACCESS:
-            ts := time.Now().UnixNano()
-            wstore.accessQ = append(wstore.accessQ, ts)
-            res <- []interface{}{ts}
+            transaction, res := cmd[1].(bool), cmd[2].(chan []interface{})
+            if transaction {
+                tscount++
+            }
+            wstore.accessQ = append(wstore.accessQ, tscount)
+            if wstore.Debug {
+                isSorted(wstore.accessQ)
+            }
+            wstore.maxlenAccessQ =
+                max(wstore.maxlenAccessQ, int64(len(wstore.accessQ)))
+            res <- []interface{}{tscount, wstore.head.root}
         case WS_RELEASE:
             minAccess := wstore.minAccess(cmd[1].(int64))
+            res := cmd[2].(chan []interface{})
             res <- []interface{}{minAccess}
-        case WS_SETSNAPSHOT:
-            offsets, root, ts := cmd[1].([]int64), cmd[2].(int64), cmd[3].(int64)
+        case WS_SETSNAPSHOT: // setSnapShot
+            offsets := cmd[1].([]int64)
+            mvroot, mvts := cmd[2].(int64), cmd[3].(int64)
+            res := cmd[4].(chan []interface{})
             wstore.freelist.add(offsets)
-            wstore.head.setRoot(root, ts)
+            wstore.head.setRoot(mvroot, mvts)
             wstore.ping2Pong()
             res <- nil
         case WS_CLOSE:
+            res := cmd[1].(chan []interface{})
             res <- nil
         }
     }
 }
 
 func (wstore *WStore) closeChannels() {
-    wstore.req <- []interface{}{WS_CLOSE}
-    <-wstore.res
+    res := make(chan []interface{})
+    wstore.req <- []interface{}{WS_CLOSE, res}
+    <-res
     close(wstore.req)
     wstore.req = nil
-    close(wstore.res)
-    wstore.res = nil
 
-    syncChan := make(chan interface{})
+    syncChan := make(chan []interface{})
     wstore.deferReq <- []interface{}{WS_CLOSE, syncChan}
     <-syncChan
     close(wstore.deferReq)
@@ -112,23 +122,42 @@ func (wstore *WStore) closeChannels() {
 // timestamp from accessQ. Also remove demarked timestamps from accessQ uptil
 // the lowest timestamp.
 func (wstore *WStore) minAccess(demarkts int64) int64 {
+    var done bool
     // Shrink accessQ by sliding out demarked access.
-    skip := 0
     for i, ts := range wstore.accessQ {
+        if ts == demarkts {
+            done = true
+            wstore.accessQ[i] = 0
+            break;
+        }
+    }
+    if done == false {
+        panic("Couldn't find timestamp")
+    }
+
+    skip := 0
+    for _, ts := range wstore.accessQ {
         if ts == 0 {
             skip += 1
-        } else if ts == demarkts {
-            wstore.accessQ[i] = 0
-            skip += 1
-        } else if ts > demarkts {
-            break
+            continue
         }
+        break
     }
     wstore.accessQ = wstore.accessQ[skip:]
     if len(wstore.accessQ) == 0 {
         return 0
+    } else if wstore.accessQ[0] == 0 {
+        log.Panicln("After sliding the accessQ window, can't be zero")
     }
     return wstore.accessQ[0]
+}
+
+func isSorted(xs []int64) {
+    for i := 0; i < len(xs)-1; i++ {
+        if xs[i+1] > 0 && xs[i] > xs[i+1] {
+            log.Panicln("Non sorted xs", xs)
+        }
+    }
 }
 
 func max(a, b int64) int64 {

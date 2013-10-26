@@ -39,14 +39,12 @@
 package btree
 
 import (
-    "fmt"
+    "log"
     "os"
     "sync"
     "sync/atomic"
     "unsafe"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // In-memory data structure to cache intermediate nodes.
 type pingPong struct {
@@ -60,25 +58,6 @@ type pingPong struct {
     kdping unsafe.Pointer
     kdpong unsafe.Pointer
     sync.RWMutex
-}
-
-func (wstore *WStore) ncache(node Node) {
-    wstore.Lock()
-    defer wstore.Unlock()
-    fpos := node.getKnode().fpos
-    if node.isLeaf() {
-        //fmt.Println("lcpong")
-        lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
-        if len(*lc) < wstore.MaxLeafCache {
-            (*lc)[fpos] = node
-        }
-        wstore.maxlenLC = max(wstore.maxlenLC, int64(len(*lc)))
-    } else {
-        //fmt.Println("ncpong")
-        nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
-        (*nc)[fpos] = node
-        wstore.maxlenNC = max(wstore.maxlenNC, int64(len(*nc)))
-    }
 }
 
 func (wstore *WStore) ncacheLookup(fpos int64) Node {
@@ -96,6 +75,36 @@ func (wstore *WStore) ncacheLookup(fpos int64) Node {
         wstore.ncHits += 1
     }
     return node
+}
+
+func (wstore *WStore) ncache(node Node) {
+    wstore.Lock()
+    defer wstore.Unlock()
+
+    fpos := node.getKnode().fpos
+    if node.isLeaf() {
+        lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
+        if len(*lc) < wstore.MaxLeafCache {
+            (*lc)[fpos] = node
+        }
+        wstore.maxlenLC = max(wstore.maxlenLC, int64(len(*lc)))
+    } else {
+        nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
+        (*nc)[fpos] = node
+        wstore.maxlenNC = max(wstore.maxlenNC, int64(len(*nc)))
+    }
+}
+
+func (wstore *WStore) ncacheEvict(fposs []int64) {
+    wstore.Lock()
+    defer wstore.Unlock()
+
+    nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
+    lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcpong))
+    for _, fpos := range fposs {
+        delete(*nc, fpos)
+        delete(*lc, fpos)
+    }
 }
 
 func (wstore *WStore) _pingCache(fpos int64, node Node) {
@@ -145,7 +154,23 @@ func (wstore *WStore) lookupDocid(rfd *os.File, fpos int64) []byte {
     return docid
 }
 
+func (wstore *WStore) assertNotMemberCache(offsets []int64) {
+    if wstore.Debug {
+        nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+        lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+        for _, fpos := range offsets {
+            if (*nc)[fpos] != nil {
+                log.Panicln("to be freed fpos is in ncping-cache", fpos)
+            } else if (*lc)[fpos] != nil {
+                log.Panicln("to be freed fpos is in ncping-cache", fpos)
+            }
+        }
+    }
+}
+
 func (wstore *WStore) ping2Pong() {
+    wstore.Lock()
+
     // Swap nodecache
     ncping := atomic.LoadPointer(&wstore.ncping)
     ncpong := atomic.LoadPointer(&wstore.ncpong)
@@ -163,8 +188,13 @@ func (wstore *WStore) ping2Pong() {
     atomic.StorePointer(&wstore.kdpong, kdping)
     atomic.StorePointer(&wstore.kdping, kdpong)
 
+    defer wstore.Unlock()
+
     // Trim leaf cache
     lc := (*map[int64]Node)(atomic.LoadPointer(&wstore.lcping))
+    nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+    wstore.maxlenLC = max(wstore.maxlenLC, int64(len(*lc)))
+    wstore.maxlenNC = max(wstore.maxlenNC, int64(len(*nc)))
     if len(*lc) > wstore.MaxLeafCache {
         i := len(*lc)
         for x := range *lc {

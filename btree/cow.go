@@ -1,11 +1,5 @@
 package btree
 
-import (
-    "fmt"
-)
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
-
 // Create a new copy of node by assigning a free file-position to it.
 func (kn *knode) copyOnWrite(store *Store) Node {
     newkn := (&knode{}).newNode(store)

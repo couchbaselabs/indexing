@@ -4,6 +4,7 @@ package btree
 import (
     "bytes"
     "fmt"
+    "log"
 )
 
 type Emitter func([]byte) // Internal type
@@ -80,7 +81,7 @@ type Node interface {
     // Recursively render this block and its child block.
     show(*Store, int)
     // Check nodes for debugging
-    check(*Store)
+    check(*Store, *CheckContext)
     // Recursively check separator keys
     checkSeparator(*Store, []int64) []int64
     // Render keys at each level
@@ -380,47 +381,61 @@ func (in *inode) showKeys(store *Store, level int) {
     store.FetchNCache(in.vs[in.size]).showKeys(store, level+1)
 }
 
-func (kn *knode) check(store *Store) {
-    kn.checkKeys(store)
+type CheckContext struct {
+    nodepath []int64
+}
+func (kn *knode) check(store *Store, c *CheckContext) {
+    kn.checkKeys(store, c)
     if kn.vs[kn.size] != 0 {
-        panic("Check: last entry is not zero")
+        log.Panicln("Check: last entry is not zero")
     }
 }
 
-func (in *inode) check(store *Store) {
-    in.getKnode().checkKeys(store)
+func (in *inode) check(store *Store, c *CheckContext) {
+    in.getKnode().checkKeys(store, c)
     for _, v := range in.vs {
         if v == 0 {
-            panic("Check: value fpos in intermediate node cannot be zero")
+            log.Panicln("Check: value fpos in intermediate node cannot be zero")
         }
-        store.FetchNCache(v).check(store)
+        for _, offset := range store.wstore.freelist.offsets {
+            if v == offset {
+                log.Panicln("Check: child node is also in freelist", offset)
+            }
+        }
+        store.FetchNCache(v).check(store, c)
     }
 }
 
-func (kn *knode) checkKeys(store *Store) {
+func (kn *knode) checkKeys(store *Store, c *CheckContext) {
     if len(kn.ks) != kn.size {
-        panic("Check: number of keys does not match size")
+        log.Panicln("Check: number of keys does not match size")
     } else if len(kn.ds) != kn.size {
-        panic("Check: number of docids does not match size")
+        log.Panicln("Check: number of docids does not match size")
     } else if len(kn.vs) != (kn.size + 1) {
-        panic("Check: number of values does not match size")
+        log.Panicln("Check: number of values does not match size")
+    }
+    for i := 0; i < len(kn.vs); i++ {
+        for _, nfpos := range c.nodepath {
+            if nfpos == kn.vs[i] {
+                log.Panicln("Circular loop")
+            }
+        }
     }
     for i := 0; i < kn.size-1; i++ {
         if kn.ks[i] < 0 || kn.ds[i] < 0 {
-            panic("Check: File position less than zero")
+            log.Panicln("Check: File position less than zero")
         }
         x := store.fetchKey(kn.ks[i])
         y := store.fetchKey(kn.ks[i+1])
         cmp := bytes.Compare(x, y)
         if cmp > 0 {
-            fmt.Println("checkkeys", string(x), string(y))
-            panic("Check: No sort order for key")
+            log.Panicln("Check: No sort order for key", string(x), string(y))
         }
         if cmp == 0 {
             x = store.fetchDocid(kn.ds[i])
             y = store.fetchDocid(kn.ds[i+1])
             if bytes.Compare(x, y) > 0 {
-                panic("Check: No sort order for docid")
+                log.Panicln("Check: No sort order for docid")
             }
         }
     }
@@ -440,7 +455,7 @@ func (in *inode) checkSeparator(store *Store, keys []int64) []int64 {
     }
     for i := range in.ks {
         if in.ks[i] != inkeys[i+1] {
-            panic("Mismatch in separator keys")
+            log.Panicln("Mismatch in separator keys")
         }
     }
     keys = append(keys, inkeys[0])

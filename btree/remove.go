@@ -1,11 +1,5 @@
 package btree
 
-import (
-    "fmt"
-)
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
-
 // Return the mutated node along with a boolean that says whether a rebalance
 // is required or not.
 func (kn *knode) remove(store *Store, key Key, mv *MV) (
@@ -54,7 +48,7 @@ func (in *inode) remove(store *Store, key Key, mv *MV) (
     stalechild := store.FetchMVCache(in.vs[index])
     child := stalechild.copyOnWrite(store)
     mv.stales = append(mv.stales, stalechild.getKnode().fpos)
-    mv.commits = append(mv.commits, child)
+    mv.commits[child.getKnode().fpos] = child
 
     // Recursive remove
     child, rebalnc, mk, md := child.remove(store, key, mv)
@@ -94,6 +88,9 @@ func (in *inode) remove(store *Store, key Key, mv *MV) (
         }
     }
 
+    // There is one corner case, where node is not `in` but `child` but in is
+    // in mv.commits and flushed into the disk, but actually orphaned.
+
     if node.getKnode().size >= store.RebalanceThrs {
         return node, false, mk, md
     }
@@ -109,7 +106,7 @@ func (in *inode) rebalanceLeft(store *Store, index int, child Node, left Node, m
     if count == 0 { // We can merge with left child
         _, stalenodes := left.mergeRight(store, child, mk, md)
         mv.stales = append(mv.stales, stalenodes...)
-        if in.size == 1 { // There is where btree-level gets reduced. crazy eh!
+        if in.size == 1 { // This is where btree-level gets reduced. crazy eh!
             mv.stales = append(mv.stales, in.fpos)
             return child, -1
         } else {
@@ -127,7 +124,7 @@ func (in *inode) rebalanceLeft(store *Store, index int, child Node, left Node, m
     } else {
         mv.stales = append(mv.stales, left.getKnode().fpos)
         left := left.copyOnWrite(store)
-        mv.commits = append(mv.commits, left)
+        mv.commits[left.getKnode().fpos] = left
         in.ks[index-1], in.ds[index-1] = left.rotateRight(store, child, count, mk, md)
         in.vs[index-1] = left.getKnode().fpos
         return in, index
@@ -161,7 +158,7 @@ func (in *inode) rebalanceRight(store *Store, index int, child Node, right Node,
     } else {
         mv.stales = append(mv.stales, right.getKnode().fpos)
         right := right.copyOnWrite(store)
-        mv.commits = append(mv.commits, right)
+        mv.commits[right.getKnode().fpos] = right
         in.ks[index], in.ds[index] = child.rotateLeft(store, right, count, mk, md)
         in.vs[index+1] = right.getKnode().fpos
         return in, index

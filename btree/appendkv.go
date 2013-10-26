@@ -10,11 +10,8 @@ package btree
 
 import (
     "encoding/binary"
-    "fmt"
     "os"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // Append/Fetch value as either byte-slice or string
 func (store *Store) fetchValue(fpos int64) []byte {

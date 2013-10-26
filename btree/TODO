@@ -21,3 +21,10 @@
 
 7. lookup() and other traversal apis that use channel to return back the
    result to caller can used buffered-channel to avoid blocking on mvQ.
+
+8. Long outstanding reads can block snapshots being flushed and stales nodes
+   reclaimed.
+
+9. Optimize flushSnapshot() to flush only leaf nodes. And periodically flush
+   the entire cache for intermediate nodes. This could mean that the in-memory
+   snapshot reference for reads will be ahead of on-disk snapshot reference.

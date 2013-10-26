@@ -4,12 +4,10 @@ package btree
 import (
     "bytes"
     "encoding/binary"
-    "fmt"
+    "log"
     "hash/crc32"
     "os"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // Structure to manage the free list
 type FreeList struct {
@@ -134,6 +132,16 @@ func (fl *FreeList) flush() uint32 {
 
     crc := crc32.Checksum(bytebuf, crctab)
     return crc
+}
+
+func (fl *FreeList) assertNotMember(fpos int64) {
+    if fl.wstore.Debug {
+        for _, offset := range fl.offsets {
+            if fpos == offset {
+                log.Panicln("Fpos in freelist", fpos)
+            }
+        }
+    }
 }
 
 func (fl *FreeList) limit() int {

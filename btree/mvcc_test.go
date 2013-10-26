@@ -1,11 +1,8 @@
 package btree
 
 import (
-    "fmt"
     "testing"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 func Benchmark_access(b *testing.B) {
     store := testStore(true)

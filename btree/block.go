@@ -8,10 +8,7 @@ package btree
 import (
     "bytes"
     "encoding/gob"
-    "fmt"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 const (
     // FIXME : Is there a better way to learn sizeof a struct.

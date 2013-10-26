@@ -19,12 +19,9 @@
 package btree
 
 import (
-    "fmt"
+    "log"
     "os"
-    "sync/atomic"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 // constants that are relevant for index-file and kv-file
 const (
@@ -88,16 +85,29 @@ func (store *Store) Destroy() {
 func (store *Store) OpStart(transaction bool) (Node, *MV, int64) {
     var mv *MV
     var root Node
-    ts := store.wstore.access()
+    var ts, rootfpos int64
     if transaction {
         store.wstore.translock <- true
-        rootfpos := mvRoot(store)
-        staleroot := store.FetchMVCache(rootfpos)
+        ts, rootfpos = store.wstore.access(transaction)
+        mvroot := mvRoot(store)
+        if mvroot == 0 {
+            mvroot = rootfpos
+        }
+        if store.Debug {
+            log.Println("MV Root: ", mvroot)
+        }
+        staleroot := store.FetchMVCache(mvroot)
         root = staleroot.copyOnWrite(store)
-        mv = &MV{stales: []int64{rootfpos}, commits: []Node{root}}
+        mv = &MV{stales: []int64{mvroot}, commits: make(map[int64]Node)}
+        mv.commits[root.getKnode().fpos] = root
     } else {
-        root = store.FetchNCache(store.currentRoot())
-        mv = &MV{stales: []int64{}, commits: []Node{}}
+        ts, rootfpos = store.wstore.access(transaction)
+        if store.Debug {
+            log.Println("Root: ", rootfpos)
+        }
+        root = store.FetchNCache(rootfpos)
+        mv = &MV{stales: []int64{}, commits: make(map[int64]Node)}
+        mv.commits[root.getKnode().fpos] = root
     }
     mv.timestamp = ts
     store.wstore.opCounts += 1
@@ -113,10 +123,6 @@ func (store *Store) OpEnd(transaction bool, mv *MV, ts int64) {
     }
 }
 
-func (store *Store) currentRoot() int64 {
-    return atomic.LoadInt64(&store.wstore.head.root)
-}
-
 // Fetch a node, identified by its file-position, from cache. If it is not
 // available from cache, fetch from disk and cache them in memory. To learn
 // how nodes are cached, refer to cache.go
@@ -128,10 +134,16 @@ func (store *Store) FetchNCache(fpos int64) Node {
         panic("Invalid fpos to fetch")
     }
     // Try to fetch from cache
+    if store.Debug {
+        log.Println("fetch", fpos)
+    }
     if node = store.wstore.ncacheLookup(fpos); node == nil {
-        store.wstore.MVloadCounts += 1
+        store.wstore.loadCounts += 1
         node = store.FetchNode(fpos)
         store.wstore.ncache(node)
+    }
+    if store.Debug {
+        store.wstore.freelist.assertNotMember(fpos)
     }
     return node
 }
@@ -146,7 +158,7 @@ func (store *Store) FetchMVCache(fpos int64) Node {
     // Sanity check
     fpos_firstblock, blocksize := store.wstore.fpos_firstblock, store.Blocksize
     if fpos < fpos_firstblock || (fpos-fpos_firstblock)%blocksize != 0 {
-        panic("Invalid fpos to fetch")
+        log.Panicln("Invalid fpos to fetch", fpos)
     }
     // Try to fetch from commitQ
     if node = store.wstore.ccacheLookup(fpos); node == nil {
@@ -155,6 +167,9 @@ func (store *Store) FetchMVCache(fpos int64) Node {
             store.wstore.MVloadCounts += 1
             node = store.FetchNode(fpos)
         }
+    }
+    if store.Debug {
+        store.wstore.freelist.assertNotMember(fpos)
     }
     return node
 }
@@ -246,10 +261,8 @@ func is_configSane(store *Store) bool {
     return true
 }
 
-func BlockCalculate(store *Store) {
-    fi, _ := store.idxRfd.Stat()
-    size := fi.Size()
-    fmt.Println("size:", size)
-    count := (size - 1024 - (store.Flistsize * 2)) / store.Blocksize
-    fmt.Println("diskblocks:", count)
-}
+//func BlockCalculate(store *Store) {
+//    fi, _ := store.idxRfd.Stat()
+//    size := fi.Size()
+//    count := (size - 1024 - (store.Flistsize * 2)) / store.Blocksize
+//}

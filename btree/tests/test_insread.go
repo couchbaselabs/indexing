@@ -2,11 +2,9 @@ package main
 
 import (
     "bytes"
-    "flag"
     "fmt"
     "github.com/couchbaselabs/indexing/btree"
     "os"
-    "runtime/pprof"
     "sort"
     "time"
 )
@@ -14,11 +12,9 @@ import (
 var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
 
 func main() {
-    flag.Parse()
-    args := flag.Args()
-    idxfile, kvfile := args[0], args[1]
-    os.Remove(idxfile)
-    os.Remove(kvfile)
+    idxfile, kvfile := "./data/test_insread_index.dat", "./data/test_insread_kv.dat"
+    //os.Remove(idxfile)
+    //os.Remove(kvfile)
 
     var conf = btree.Config{
         Idxfile: idxfile,
@@ -37,7 +33,7 @@ func main() {
         Nocache:       false,
     }
     bt := btree.NewBTree(btree.NewStore(conf))
-    factor := 10
+    factor := 100
     count := 10000
     seed := time.Now().UnixNano()
 

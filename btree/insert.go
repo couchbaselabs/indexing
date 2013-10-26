@@ -2,14 +2,13 @@
 package btree
 
 import (
-    "fmt"
+    //"log"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 func (kn *knode) insert(store *Store, key Key, v Value, mv *MV) (
     Node, int64, int64) {
 
+    //log.Println("Insert kn", kn.fpos)
     index, kfpos, dfpos := kn.searchGE(store, key, true)
     kn.ks = kn.ks[:len(kn.ks)+1]         // Make space in the key array
     kn.ds = kn.ds[:len(kn.ds)+1]         // Make space in the key array
@@ -26,19 +25,20 @@ func (kn *knode) insert(store *Store, key Key, v Value, mv *MV) (
         return nil, -1, -1
     }
     spawnKn, mkfpos, mdfpos := kn.split(store)
-    mv.commits = append(mv.commits, spawnKn)
+    mv.commits[spawnKn.fpos] = spawnKn
     return spawnKn, mkfpos, mdfpos
 }
 
 func (in *inode) insert(store *Store, key Key, v Value, mv *MV) (
     Node, int64, int64) {
 
+    //log.Println("Insert in", in.fpos)
     index, _, _ := in.searchGE(store, key, true)
     // Copy on write
     stalechild := store.FetchMVCache(in.vs[index])
     child := stalechild.copyOnWrite(store)
     mv.stales = append(mv.stales, stalechild.getKnode().fpos)
-    mv.commits = append(mv.commits, child)
+    mv.commits[child.getKnode().fpos] = child
 
     // Recursive insert
     spawn, mkfpos, mdfpos := child.insert(store, key, v, mv)
@@ -65,7 +65,7 @@ func (in *inode) insert(store *Store, key Key, v Value, mv *MV) (
 
     // this node is full, so we have to split
     spawnIn, mkfpos, mdfpos := in.split(store)
-    mv.commits = append(mv.commits, spawnIn)
+    mv.commits[spawnIn.fpos] = spawnIn
     return spawnIn, mkfpos, mdfpos
 }
 

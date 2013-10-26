@@ -2,12 +2,10 @@ package btree
 
 import (
     "bytes"
-    "fmt"
     "math/rand"
     "testing"
 )
 
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 var datafile = "./data/appendkv_datafile.dat"
 
 func Test_KV(t *testing.T) {

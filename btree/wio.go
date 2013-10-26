@@ -1,11 +1,9 @@
 package btree
 
 import (
-    "fmt"
-    "time"
+    "log"
+    //"sync/atomic"
 )
-
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
 
 type IO struct {
     mvQ     []*MV
@@ -16,9 +14,8 @@ func mvRoot(store *Store) int64 {
     wstore := store.wstore
     if len(wstore.mvQ) > 0 {
         return wstore.mvQ[len(wstore.mvQ)-1].root
-    } else {
-        return store.currentRoot()
     }
+    return 0
 }
 
 func (wstore *WStore) ccacheLookup(fpos int64) Node {
@@ -31,15 +28,14 @@ func (wstore *WStore) ccacheLookup(fpos int64) Node {
 
 func (wstore *WStore) commit(mv *MV, minAccess int64, force bool) {
     if mv != nil {
-        for _, node := range mv.commits {
-            wstore.commitQ[node.getKnode().fpos] = node
+        for fpos, node := range mv.commits {
+            wstore.commitQ[fpos] = node
         }
         wstore.postMV(mv)
         wstore.mvQ = append(wstore.mvQ, mv)
     }
     if force || len(wstore.mvQ) > wstore.DrainRate {
-        wstore.syncSnapshot(minAccess)
-        wstore.commitQ = make(map[int64]Node)
+        wstore.syncSnapshot(minAccess, force)
     }
     if force == false && len(wstore.freelist.offsets) < (wstore.Maxlevel*2) {
         offsets := wstore.appendBlocks(0, wstore.appendCount())
@@ -47,13 +43,40 @@ func (wstore *WStore) commit(mv *MV, minAccess int64, force bool) {
     }
 }
 
-func (wstore *WStore) flushSnapshot(commitQ map[int64]Node, offsets []int64, root int64) {
+func (wstore *WStore) delCommits(mvQ []*MV, fpos int64) {
+    var spotmv *MV = nil
+    for _, mv := range mvQ {
+        if mv.commits[fpos] != nil {
+            spotmv = mv
+            break
+        }
+    }
+    if spotmv == nil {
+        log.Panicln("stale node is expected in previous snapshot", fpos)
+    } else {
+        delete(spotmv.commits, fpos)
+    }
+}
+
+func (wstore *WStore) flushSnapshot(
+    commitQ []Node, offsets []int64, mvroot, mvts int64, force bool) {
 
     // Sync kv file
     wstore.kvWfd.Sync()
     for _, node := range commitQ { // flush nodes first
-        wstore.flushNode(node)
+        //if force || node.isLeaf() {
+            wstore.flushNode(node)
+        //}
     }
+    // if force also flush the intermediate ping cache and pong cache
+    //nc := (*map[int64]Node)(atomic.LoadPointer(&wstore.ncping))
+    //for _, node := range *nc { // flush nodes first
+    //    wstore.flushNode(node)
+    //}
+    //nc = (*map[int64]Node)(atomic.LoadPointer(&wstore.ncpong))
+    //for _, node := range *nc { // flush nodes first
+    //    wstore.flushNode(node)
+    //}
 
     // Cloned freelist
     freelist := wstore.freelist.clone()
@@ -61,7 +84,10 @@ func (wstore *WStore) flushSnapshot(commitQ map[int64]Node, offsets []int64, roo
     crc := freelist.flush() // then this
     // Cloned head
     head := wstore.head.clone()
-    head.root = root
+    head.setRoot(mvroot, mvts)
     head.flush(crc) // finally this
     wstore.idxWfd.Sync()
+    if wstore.Debug {
+        log.Println("snapshot", mvroot, mvts, commitQ, offsets)
+    }
 }

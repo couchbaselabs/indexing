@@ -2,16 +2,13 @@
 package btree
 
 import (
-    "fmt"
+    "log"
     "os"
     "path/filepath"
     "sync"
     "syscall"
-    "time"
     "unsafe"
 )
-
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", syscall.F_NOCACHE)
 
 // WStore instances are created for each index. If applications tend to create
 // multiple stores for the same index file, they will refer to the same
@@ -22,7 +19,7 @@ var wmu sync.Mutex // Protected access to `writeStores`
 type MV struct {
     timestamp int64
     root      int64
-    commits   []Node
+    commits   map[int64]Node
     stales    []int64
 }
 
@@ -57,6 +54,7 @@ type WStoreStats struct {
     // MVCC
     popCounts        int64
     maxlenAccessQ    int64
+    maxlenMVQ        int64
     reclaimCount     int64
     recycleCount     int64
     appendCounts     int64
@@ -81,8 +79,9 @@ type WStoreStats struct {
 func OpenWStore(conf Config) *WStore {
     var wstore *WStore
     defer func() {
-        wstore.req <- []interface{}{WS_SAYHI} // Say hi
-        <-wstore.res
+        res := make(chan []interface{})
+        wstore.req <- []interface{}{WS_SAYHI, res} // Say hi
+        <-res
     }()
     wstore = getWStore(conf) // Try getting a write-store
     if wstore == nil {       // nil means we have to create a new index file
@@ -106,6 +105,9 @@ func OpenWStore(conf Config) *WStore {
 // Close write-Store
 func (wstore *WStore) CloseWStore() bool {
     if derefWSTore(wstore) && (wstore.refcount == 0) {
+        if wstore.Debug {
+            log.Println("Closing WStore:", wstore.Idxfile)
+        }
         wstore.commit(nil, 0, true)
         wstore.closeChannels()
         // Cleanup
@@ -183,7 +185,6 @@ func newWStore(conf Config) *WStore {
         MVCC: MVCC{
             accessQ:   make([]int64, 0),
             req:       make(chan []interface{}),
-            res:       make(chan []interface{}),
             translock: make(chan bool, 1),
         },
         pingPong: pingPong{
@@ -201,6 +202,10 @@ func newWStore(conf Config) *WStore {
         DEFER: DEFER{
             deferReq: make(chan []interface{}, 2000),
         },
+    }
+    // Default values for configuration
+    if wstore.MVCCThrottleRate == 0 {
+        wstore.MVCCThrottleRate = 100 // milliseconds
     }
     return wstore
 }
@@ -252,7 +257,7 @@ func createWStore(conf Config) {
     b := (&block{leaf: TRUE}).newBlock(0, 0)
     root := &knode{block: *b, fpos: fpos, dirty: true}
     wstore.flushNode(root)
-    wstore.head.setRoot(root.fpos, time.Now().UnixNano())
+    wstore.head.setRoot(root.fpos, 0)
     crc := wstore.freelist.flush()
     wstore.head.flush(crc)
     // Close wstore
@@ -262,8 +267,6 @@ func createWStore(conf Config) {
     wstore.idxWfd = nil
     close(wstore.req)
     wstore.req = nil
-    close(wstore.res)
-    wstore.res = nil
     close(wstore.deferReq)
     wstore.deferReq = nil
     close(wstore.translock)

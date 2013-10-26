@@ -4,11 +4,10 @@
 package btree
 
 import (
-    "fmt"
+    "log"
+    "time"
     "sync/atomic"
 )
-
-var _ = fmt.Sprintf("keep 'fmt' import during debugging")
 
 const (
     DEFER_ADD byte = iota
@@ -43,18 +42,18 @@ func (wstore *WStore) postMV(mv *MV) {
 }
 
 // Synchronize disk snapshot with in-memory snapshot.
-func (wstore *WStore) syncSnapshot(minAccess int64) {
-    syncChan := make(chan interface{})
-    wstore.deferReq <- []interface{}{WS_SYNCSNAPSHOT, minAccess, syncChan}
+func (wstore *WStore) syncSnapshot(minAccess int64, force bool) {
+    syncChan := make(chan []interface{})
+    x := []interface{}{WS_SYNCSNAPSHOT, minAccess, syncChan, force}
+    wstore.deferReq <- x
     <-syncChan
 }
 
 func doDefer(wstore *WStore) {
     var cmd []interface{}
+    var oldmv *MV
     // Following collection objects are used for every cycle of MVCC snapshot
     // synchronization.
-    commitQ := make(map[int64]Node)
-    recycleQ := make([]int64, 0, wstore.DrainRate*wstore.Maxlevel)
     addKDs := make(map[int64][]byte)
     delKDs := make(map[int64][]byte)
     for {
@@ -81,97 +80,146 @@ func doDefer(wstore *WStore) {
 
             case WS_MV: // postMV()
                 mv := cmd[1].(*MV)
-                for _, node := range mv.commits { // update commitQ & ping cache
-                    fpos := node.getKnode().fpos
-                    commitQ[fpos] = node
+                if oldmv != nil {
+                    if oldmv.root != mv.stales[0] {
+                        log.Panicln("snapshots are not chained", oldmv, mv)
+                    }
+                }
+                oldmv = mv
+                for fpos, node := range mv.commits { // update commitQ & ping cache
                     wstore._pingCache(fpos, node)
                 }
-                stales := make([]int64, 0, len(mv.stales))
-                for _, fpos := range mv.stales {
-                    if commitQ[fpos] != nil { // Recyle stalenodes
-                        recycleQ = append(recycleQ, fpos)
-                        delete(commitQ, fpos) // evict recycled nodes from commitQ
-                        wstore._pingCacheEvict(fpos)
-                    } else { // stalenodes to be _reclaimed_
-                        stales = append(stales, fpos)
-                    }
+                wstore.maxlenMVQ = max(wstore.maxlenMVQ, int64(len(wstore.mvQ)))
+                if wstore.Debug {
+                    log.Println("MVComms", commitkeys(mv.commits))
+                    log.Println("MVStales", mv.stales)
                 }
-                mv.stales = stales // Only stalenodes that need to be reclaimed
 
             case WS_SYNCSNAPSHOT: // syncSnapshot()
-                minAccess, syncChan := cmd[1].(int64), cmd[2].(chan interface{})
-                reclaimQ := make([]int64, 0, wstore.DrainRate)
-                offsets := make([]int64, 0, wstore.DrainRate)
-                offsets = append(offsets, recycleQ...)
+                var mvroot, mvts int64
+
+                minAccess, syncChan := cmd[1].(int64), cmd[2].(chan []interface{})
+                force := cmd[3].(bool)
+                hdts := wstore.head.timestamp
+
+                if throttleMVCC(wstore, minAccess, hdts) {
+                    syncChan <- nil
+                    continue
+                }
+
+                if wstore.Debug {
+                    log.Println("Minimum access", minAccess, hdts)
+                    log.Println("accessQ", wstore.accessQ)
+                }
+
+                commitQ, snapshot := snapshotToCommit(wstore, hdts)
+                recycleQ := recycleSnapshot(wstore, minAccess, hdts, force)
+
                 wstore.recycleCount += int64(len(recycleQ))
-                if len(commitQ) > 0 {
-                    mv := wstore.mvQ[len(wstore.mvQ)-1]
-                    if len(wstore.mvQ) < 1 {
-                        panic("If commitQ is dirty, mvQ should also be dirty")
-                    }
-                    // Actual Reclaim
-                    if minAccess == 0 || minAccess > wstore.head.timestamp {
-                        skip := 0
-                        for _, mvp := range wstore.mvQ {
-                            if mvp.timestamp < wstore.head.timestamp {
-                                skip += 1
-                                reclaimQ = append(reclaimQ, mvp.stales...)
-                            } else {
-                                break
-                            }
-                        }
-                        wstore.mvQ = wstore.mvQ[skip:]
-                    }
-                    // Reclaim file-positions into free-list.
-                    offsets = append(offsets, reclaimQ...)
-                    wstore.reclaimCount += int64(len(reclaimQ))
+                if wstore.Debug {
+                    wstore.assertNotMemberCache(recycleQ)
+                }
 
-                    // Adjust commitQ and ping cache before pingpong
-                    for _, fpos := range reclaimQ {
-                        delete(commitQ, fpos)
-                        wstore._pingCacheEvict(fpos)
-                    }
+                if snapshot == nil {
+                    mvroot, mvts = wstore.head.root, hdts
+                } else {
+                    mvroot, mvts = snapshot.root, snapshot.timestamp
+                }
 
-                    wstore.flushSnapshot(commitQ, offsets, mv.root)
-                    wstore.setSnapShot(offsets, mv.root, mv.timestamp)
+                wstore.flushSnapshot(commitQ, recycleQ, mvroot, mvts, force)
+                wstore.setSnapShot(recycleQ, mvroot, mvts)
 
-                    // Update btree's ping cache
-                    for fpos, node := range commitQ {
-                        wstore._pingCache(fpos, node)
-                    }
-                    for _, fpos := range recycleQ {
-                        wstore._pingCacheEvict(fpos)
-                    }
-                    for _, fpos := range reclaimQ {
-                        wstore._pingCacheEvict(fpos)
-                    }
-
-                    // Update KD's ping cache.
-                    kdping := (*map[int64][]byte)(atomic.LoadPointer(&wstore.kdping))
-                    for fpos, v := range addKDs {
-                        (*kdping)[fpos] = v
-                    }
-                    for fpos, _ := range delKDs {
-                        delete(*kdping, fpos)
-                    }
-
-                    //wstore.displayPing()
-                    //wstore.checkPingPong()
+                // Update btree's ping cache
+                for _, node := range commitQ {
+                    wstore._pingCache(node.getKnode().fpos, node)
+                }
+                for _, fpos := range recycleQ {
+                    wstore._pingCacheEvict(fpos)
+                }
+                if wstore.Debug {
+                    wstore.assertNotMemberCache(recycleQ)
                 }
 
                 // Reset and restart the cycle of snapshot synchronization
-                commitQ = make(map[int64]Node)
-                recycleQ = make([]int64, 0, wstore.DrainRate*wstore.Maxlevel)
                 addKDs = make(map[int64][]byte)
                 delKDs = make(map[int64][]byte)
+                wstore.commitQ = make(map[int64]Node)
                 syncChan <- nil
 
             case WS_CLOSE: // Quit
-                syncChan := cmd[1].(chan interface{})
+                syncChan := cmd[1].(chan []interface{})
                 syncChan <- nil
             }
         } else {
             break
         }
     }
+}
+
+func throttleMVCC(wstore *WStore, minAccess, hdts int64) bool {
+    if minAccess == 0 {
+        return false
+    }
+    if (hdts - minAccess) < int64(wstore.DrainRate * 2) {
+        return false
+    }
+    if wstore.Debug {
+        log.Println(
+            "Sleeping for ",
+            wstore.MVCCThrottleRate*time.Millisecond,
+            hdts,
+            minAccess,
+        )
+    }
+    time.Sleep(wstore.MVCCThrottleRate*time.Millisecond)
+    return true
+}
+
+// Commit next batch of snapshots from head.timestamp
+func snapshotToCommit(wstore *WStore, hdts int64) ([]Node, *MV) {
+    var snapshot *MV
+    commitQ := make([]Node, 0, len(wstore.commitQ))
+    for _, mvp := range wstore.mvQ {
+        if mvp.timestamp > hdts {
+            for fpos, node := range mvp.commits {
+                delete(wstore.commitQ, fpos)
+                commitQ = append(commitQ, node)
+            }
+            snapshot = mvp
+        }
+    }
+    return commitQ, snapshot
+}
+
+// Gather RecycleQ
+func recycleSnapshot(wstore *WStore, minAccess, hdts int64, force bool) []int64 {
+    recycleQ := make([]int64, 0, wstore.DrainRate*wstore.Maxlevel)
+    if minAccess == 0 || hdts == 0 || minAccess > hdts {
+        skip := 0
+        for _, mvp := range wstore.mvQ {
+            // If all of them are false break out of the loop
+            if !(force || hdts == 0 || (mvp.timestamp < hdts)) {
+                break
+            }
+            recycleQ = append(recycleQ, mvp.stales...)
+            for _, fpos := range mvp.stales {
+                delete(wstore.commitQ, fpos)
+                wstore._pingCacheEvict(fpos)
+            }
+            skip++
+        }
+        wstore.mvQ = wstore.mvQ[skip:]
+    }
+    if wstore.Debug {
+        log.Println("stales", recycleQ)
+    }
+    return recycleQ
+}
+
+func commitkeys(commits map[int64]Node) []int64{
+    ks := make([]int64, 0)
+    for _, node := range commits {
+        ks = append(ks, node.getKnode().fpos)
+    }
+    return ks
 }

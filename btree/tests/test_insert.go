@@ -1,7 +1,6 @@
 package main
 
 import (
-    "flag"
     "fmt"
     "github.com/couchbaselabs/indexing/btree"
     "os"
@@ -11,9 +10,7 @@ import (
 var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
 
 func main() {
-    flag.Parse()
-    args := flag.Args()
-    idxfile, kvfile := args[0], args[1]
+    idxfile, kvfile := "./data/test_insert_index.dat", "./data/test_insert_kv.dat"
     os.Remove(idxfile)
     os.Remove(kvfile)
 
@@ -23,10 +20,10 @@ func main() {
         IndexConfig: btree.IndexConfig{
             Sectorsize: 512,
             Flistsize:  1000 * btree.OFFSET_SIZE,
-            Blocksize:  512,
+            Blocksize:  4 * 1024,
         },
         Maxlevel:      6,
-        RebalanceThrs: 4,
+        RebalanceThrs: 25,
         AppendRatio:   0.7,
         DrainRate:     200,
         MaxLeafCache:  1000,
@@ -35,17 +32,12 @@ func main() {
     }
     bt := btree.NewBTree(btree.NewStore(conf))
 
-    for i := 0; i < 100; i++ {
-        seed := time.Now().UnixNano()
-        fmt.Println("Seed:", seed)
-        factor := i
-        count := 1000
-        doinsert(seed, factor, count, bt, false)
-        bt.Drain()
-        bt.Check()
-        fmt.Println("Done ", time.Now().UnixNano()/1000000, factor*count)
-        fmt.Println()
-    }
+    seed := time.Now().UnixNano()
+    fmt.Println("Seed:", seed)
+    doinsert(seed, 100, 10000, bt, false)
+    bt.Drain()
+    bt.Stats(true)
+    fmt.Println()
     bt.Close()
 }
 
@@ -61,6 +53,6 @@ func doinsert(seed int64, factor, count int, bt *btree.BTree, check bool) {
                 bt.Check()
             }
         }
+        fmt.Println("Done ", time.Now().UnixNano()/1000000, (i+1)*count)
     }
-    bt.Stats()
 }
