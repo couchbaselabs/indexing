@@ -3,7 +3,7 @@ package main
 import (
     "fmt"
     "github.com/couchbaselabs/indexing/btree"
-    "os"
+    //"os"
     "time"
 )
 
@@ -11,8 +11,8 @@ var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
 
 func main() {
     idxfile, kvfile := "./data/test_insert_index.dat", "./data/test_insert_kv.dat"
-    os.Remove(idxfile)
-    os.Remove(kvfile)
+    //os.Remove(idxfile)
+    //os.Remove(kvfile)
 
     var conf = btree.Config{
         Idxfile: idxfile,
@@ -34,7 +34,7 @@ func main() {
 
     seed := time.Now().UnixNano()
     fmt.Println("Seed:", seed)
-    doinsert(seed, 100, 10000, bt, false)
+    doinsert(seed, 10, 10000, bt, false)
     bt.Drain()
     bt.Stats(true)
     fmt.Println()
