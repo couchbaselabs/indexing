@@ -28,3 +28,13 @@
 9. Optimize flushSnapshot() to flush only leaf nodes. And periodically flush
    the entire cache for intermediate nodes. This could mean that the in-memory
    snapshot reference for reads will be ahead of on-disk snapshot reference.
+
+Coding guidelines
+
+1. Using _ assignment to avoid unsided imports.
+
+2. Avoid using fmt.* in test cases, instead use t.Error(), t.Errorf() etc ...
+
+3. Don't name test functions with `_`, use camelCase.
+
+4. panic(err) is sufficient, don't need to do panic(err.Error())
