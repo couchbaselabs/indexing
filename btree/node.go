@@ -385,13 +385,16 @@ type CheckContext struct {
     nodepath []int64
 }
 func (kn *knode) check(store *Store, c *CheckContext) {
+    c.nodepath = append(c.nodepath, kn.fpos)
     kn.checkKeys(store, c)
     if kn.vs[kn.size] != 0 {
         log.Panicln("Check: last entry is not zero")
     }
+    c.nodepath = c.nodepath[:len(c.nodepath)-1]
 }
 
 func (in *inode) check(store *Store, c *CheckContext) {
+    c.nodepath = append(c.nodepath, in.fpos)
     in.getKnode().checkKeys(store, c)
     for _, v := range in.vs {
         if v == 0 {
@@ -404,6 +407,7 @@ func (in *inode) check(store *Store, c *CheckContext) {
         }
         store.FetchNCache(v).check(store, c)
     }
+    c.nodepath = c.nodepath[:len(c.nodepath)-1]
 }
 
 func (kn *knode) checkKeys(store *Store, c *CheckContext) {
@@ -414,13 +418,19 @@ func (kn *knode) checkKeys(store *Store, c *CheckContext) {
     } else if len(kn.vs) != (kn.size + 1) {
         log.Panicln("Check: number of values does not match size")
     }
-    for i := 0; i < len(kn.vs); i++ {
-        for _, nfpos := range c.nodepath {
-            if nfpos == kn.vs[i] {
-                log.Panicln("Circular loop")
+    // Detect circular loop, only for intermediate nodes. kn.vs for leaf nodes
+    // with point into kvfile.
+    if !kn.isLeaf() {
+        for i := 0; i < len(kn.vs); i++ {
+            for _, nfpos := range c.nodepath {
+                if nfpos == kn.vs[i] {
+                    log.Panicln(
+                        "Circular loop", kn.fpos, c.nodepath, nfpos, kn.vs[i])
+                }
             }
         }
     }
+
     for i := 0; i < kn.size-1; i++ {
         if kn.ks[i] < 0 || kn.ds[i] < 0 {
             log.Panicln("Check: File position less than zero")
