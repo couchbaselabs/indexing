@@ -121,6 +121,7 @@ func (wstore *WStore) closeChannels() {
 // Demark the timestamp to zero in accessQ and return the minimum value of
 // timestamp from accessQ. Also remove demarked timestamps from accessQ uptil
 // the lowest timestamp.
+// TODO : Can we optimize the two loops into single loop
 func (wstore *WStore) minAccess(demarkts int64) int64 {
     var done bool
     // Shrink accessQ by sliding out demarked access.

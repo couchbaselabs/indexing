@@ -80,12 +80,13 @@ func doDefer(wstore *WStore) {
 
             case WS_MV: // postMV()
                 mv := cmd[1].(*MV)
-                if oldmv != nil {
+                if oldmv != nil && wstore.Debug {
                     if oldmv.root != mv.stales[0] {
                         log.Panicln("snapshots are not chained", oldmv, mv)
                     }
                 }
                 oldmv = mv
+
                 for fpos, node := range mv.commits { // update commitQ & ping cache
                     wstore._pingCache(fpos, node)
                 }

@@ -9,8 +9,10 @@
 package btree
 
 import (
-    "encoding/binary"
     "os"
+    "log"
+    "reflect"
+    "unsafe"
 )
 
 // Append/Fetch value as either byte-slice or string
@@ -67,14 +69,15 @@ func (store *Store) appendDocidS(docid string) int64 {
 
 // Read bytes from `kvStore.rfd` at `fpos`.
 func (wstore *WStore) readKV(rfd *os.File, fpos int64) []byte {
-    var size int32
     if _, err := rfd.Seek(fpos, os.SEEK_SET); err != nil {
-        panic(err.Error())
+        log.Panicln(err, fpos)
     }
-    binary.Read(rfd, binary.LittleEndian, &size)
-    b := make([]byte, size)
-    if _, err := rfd.Read(b); err != nil {
-        panic(err.Error())
+
+    buf := make([]byte, 4)
+    rfd.ReadAt(buf, fpos) // Read size field
+    b := make([]byte, bytesToint32(buf))
+    if _, err := rfd.ReadAt(b, fpos+4); err != nil {
+        panic(err)
     }
     wstore.countReadKV += 1
     return b
@@ -83,10 +86,24 @@ func (wstore *WStore) readKV(rfd *os.File, fpos int64) []byte {
 func (wstore *WStore) appendKV(val []byte) int64 {
     wfd := wstore.kvWfd
     fpos, _ := wfd.Seek(0, os.SEEK_END)
-    binary.Write(wfd, binary.LittleEndian, int32(len(val)))
-    if _, err := wfd.Write(val); err != nil {
-        panic(err.Error())
+    buf := int32Tobytes(int32(len(val)))
+    wfd.WriteAt(buf, fpos)
+    if _, err := wfd.WriteAt(val, fpos+4); err != nil {
+        panic(err)
     }
     wstore.countAppendKV += 1
     return fpos
+}
+
+func bytesToint32(buf []byte) int32 {
+    bufp := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+    size := (*int32)(unsafe.Pointer(bufp.Data))
+    return *size
+}
+
+func int32Tobytes(size int32) []byte {
+    buf := make([]byte, 4, 4)
+    bufp := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+    bufp.Data = (uintptr)(unsafe.Pointer(&size))
+    return buf
 }

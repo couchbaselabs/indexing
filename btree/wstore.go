@@ -297,7 +297,7 @@ func (wstore *WStore) appendBlocks(fpos int64, count int) []int64 {
         }
         // Actuall append
         for i := 0; i < count; i++ {
-            if n, err := wfd.Write(data); err == nil {
+            if n, err := wfd.WriteAt(data, fpos); err == nil {
                 offsets = append(offsets, fpos)
                 fpos += int64(n)
             } else {

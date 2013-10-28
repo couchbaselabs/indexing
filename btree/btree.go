@@ -195,9 +195,9 @@ func (bt *BTree) Close() {
     bt.store.Close()
 }
 
-func (bt *BTree) Insert(k Key, v Value) bool {
+func (bt *BTree) Insert(key Key, v Value) bool {
     root, mv, timestamp := bt.store.OpStart(true) // root with transaction
-    spawn, mk, md := root.insert(bt.store, k, v, mv)
+    spawn, mk, md := root.insert(bt.store, key, v, mv)
     if spawn != nil { // Root splits
         in := (&inode{}).newNode(bt.store)
 
@@ -306,8 +306,8 @@ func (bt *BTree) Lookup(key Key) chan []byte {
         root.lookup(bt.store, key, func(val []byte) {
             c <- val
         })
-        close(c)
         bt.store.OpEnd(false, nil, timestamp)
+        close(c)
     }()
     return c
 }

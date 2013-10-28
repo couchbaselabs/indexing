@@ -69,41 +69,41 @@ func (hd *Head) fetch() bool {
     }
     rfd, _ := os.Open(hd.wstore.Idxfile)
 
-    rfd.Seek(hd.fpos_head1, os.SEEK_SET) // Read from first sector
-    if err := binary.Read(rfd, LittleEndian, &hd.root); err != nil {
+    data1 := make([]byte, hd.sectorsize) // Read from first sector
+    data2 := make([]byte, hd.sectorsize) // Read from second sector
+    if _, err := rfd.ReadAt(data1, hd.fpos_head1); err != nil {
+        panic(err)
+    }
+    if _, err := rfd.ReadAt(data2, hd.fpos_head2); err != nil {
+        panic(err)
+    }
+
+    buf := bytes.NewBuffer(data1)
+    if err := binary.Read(buf, LittleEndian, &hd.root); err != nil {
         panic("Unable to read root from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.timestamp); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.timestamp); err != nil {
         panic("Unable to read root from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.sectorsize); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.sectorsize); err != nil {
         panic("Unable to read sectorsize from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.flistsize); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.flistsize); err != nil {
         panic("Unable to read flistsize from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.blocksize); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.blocksize); err != nil {
         panic("Unable to read blocksize from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.maxkeys); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.maxkeys); err != nil {
         panic("Unable to read maxkeys from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.pick); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.pick); err != nil {
         panic("Unable to read pick from first head sector")
     }
-    if err := binary.Read(rfd, LittleEndian, &hd.crc); err != nil {
+    if err := binary.Read(buf, LittleEndian, &hd.crc); err != nil {
         panic("Unable to read crc from first head sector")
     }
 
-    data1 := make([]byte, hd.sectorsize)
-    data2 := make([]byte, hd.sectorsize)
-
-    if _, err := rfd.ReadAt(data1, hd.fpos_head1); err != nil {
-        panic(err.Error())
-    }
-    if _, err := rfd.ReadAt(data2, hd.fpos_head2); err != nil {
-        panic(err.Error())
-    }
     if bytes.Equal(data1, data2) {
         return false
     }
