@@ -1,24 +1,25 @@
 // Index mutation due to {key,docid,value} insert.
 package btree
 
-import (
-    //"log"
-)
-
 func (kn *knode) insert(store *Store, key Key, v Value, mv *MV) (
     Node, int64, int64) {
 
-    //log.Println("Insert kn", kn.fpos)
     index, kfpos, dfpos := kn.searchGE(store, key, true)
-    kn.ks = kn.ks[:len(kn.ks)+1]         // Make space in the key array
-    kn.ds = kn.ds[:len(kn.ds)+1]         // Make space in the key array
-    copy(kn.ks[index+1:], kn.ks[index:]) // Shift existing data out of the way
-    copy(kn.ds[index+1:], kn.ds[index:]) // Shift existing data out of the way
-    kn.ks[index], kn.ds[index] = store.keyOf(key, kfpos, dfpos)
+    if kfpos >= 0 && dfpos >= 0 {
+        kn.ks[index], kn.ds[index] = kfpos, dfpos
+        kn.vs[index] = store.valueOf(v)
+    } else {
+        kn.ks = kn.ks[:len(kn.ks)+1]         // Make space in the key array
+        kn.ds = kn.ds[:len(kn.ds)+1]         // Make space in the key array
+        copy(kn.ks[index+1:], kn.ks[index:]) // Shift existing data out of the way
+        copy(kn.ds[index+1:], kn.ds[index:]) // Shift existing data out of the way
+        kn.ks[index], kn.ds[index] = store.keyOf(key, kfpos, dfpos)
 
-    kn.vs = kn.vs[:len(kn.vs)+1]         // Make space in the value array
-    copy(kn.vs[index+1:], kn.vs[index:]) // Shift existing data out of the way
-    kn.vs[index] = store.valueOf(v)
+        kn.vs = kn.vs[:len(kn.vs)+1]         // Make space in the value array
+        copy(kn.vs[index+1:], kn.vs[index:]) // Shift existing data out of the way
+        kn.vs[index] = store.valueOf(v)
+    }
+
 
     kn.size = len(kn.ks)
     if kn.size <= store.maxKeys() {
@@ -32,7 +33,6 @@ func (kn *knode) insert(store *Store, key Key, v Value, mv *MV) (
 func (in *inode) insert(store *Store, key Key, v Value, mv *MV) (
     Node, int64, int64) {
 
-    //log.Println("Insert in", in.fpos)
     index, _, _ := in.searchGE(store, key, true)
     // Copy on write
     stalechild := store.FetchMVCache(in.vs[index])
