@@ -2,51 +2,53 @@ package main
 
 import (
     "bytes"
-    "fmt"
     "github.com/couchbaselabs/indexing/btree"
+    "log"
     "os"
     "sort"
     "time"
 )
 
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now())
+var conf = btree.Config{
+    Idxfile: "./data/test_insread_index.dat",
+    Kvfile:  "./data/test_insread_kv.dat",
+    IndexConfig: btree.IndexConfig{
+        Sectorsize: 512,
+        Flistsize:  1000 * btree.OFFSET_SIZE,
+        Blocksize:  512,
+    },
+    Maxlevel:      6,
+    RebalanceThrs: 3,
+    AppendRatio:   0.7,
+    DrainRate:     200,
+    MaxLeafCache:  1000,
+    Sync:          false,
+    Nocache:       false,
+}
 
 func main() {
-    idxfile, kvfile := "./data/test_insread_index.dat", "./data/test_insread_kv.dat"
-    //os.Remove(idxfile)
-    //os.Remove(kvfile)
-
-    var conf = btree.Config{
-        Idxfile: idxfile,
-        Kvfile:  kvfile,
-        IndexConfig: btree.IndexConfig{
-            Sectorsize: 512,
-            Flistsize:  1000 * btree.OFFSET_SIZE,
-            Blocksize:  512,
-        },
-        Maxlevel:      6,
-        RebalanceThrs: 3,
-        AppendRatio:   0.7,
-        DrainRate:     200,
-        MaxLeafCache:  1000,
-        Sync:          false,
-        Nocache:       false,
+    //os.Remove(conf.idxfile)
+    //os.Remove(conf.kvfile)
+    if conf.Debug {
+        fd, _ := os.Create("debug")
+        log.SetOutput(fd)
     }
+
     bt := btree.NewBTree(btree.NewStore(conf))
-    factor := 100
+    factor := 10
     count := 10000
     seed := time.Now().UnixNano()
 
-    fmt.Println("Seed:", seed)
+    log.Println("Seed:", seed)
     keys, values := btree.TestData(10000, seed)
-    fmt.Println(time.Now())
+    log.Println(time.Now())
     for i := 0; i < factor; i++ {
         for j := 0; j < count; j++ {
             k, v := keys[j], values[j]
-            k.Id = (i * count) + j
+            k.Id = int64((i * count) + j)
             bt.Insert(k, v)
         }
-        fmt.Println("Done ", time.Now().UnixNano()/1000000, (i+1)*count)
+        log.Println("Done ", time.Now().UnixNano()/1000000, (i+1)*count)
     }
     bt.Drain()
     countIn(bt, count, factor)
@@ -59,7 +61,7 @@ func main() {
 
 func countIn(bt *btree.BTree, count int, factor int) {
     fullcount := count * factor
-    fmt.Println("count")
+    log.Println("count")
     if bt.Count() != int64(fullcount) {
         panic("Count mismatch")
     }
@@ -67,11 +69,11 @@ func countIn(bt *btree.BTree, count int, factor int) {
 
 func front(bt *btree.BTree) {
     frontK, frontD, frontV := bt.Front()
-    fmt.Println("front --", string(frontK), string(frontD), string(frontV))
+    log.Println("front --", string(frontK), string(frontD), string(frontV))
 }
 
 func keyset(bt *btree.BTree, count, factor int) {
-    fmt.Println("KeySet")
+    log.Println("KeySet")
     fullcount := count * factor
     frontK, _, _ := bt.Front()
     ch := bt.KeySet()
@@ -96,7 +98,7 @@ func keyset(bt *btree.BTree, count, factor int) {
 }
 
 func fullset(bt *btree.BTree, count, factor int) {
-    fmt.Println("FullSet")
+    log.Println("FullSet")
     fullcount := count * factor
     frontK, _, _ := bt.Front()
     ch := bt.FullSet()
@@ -125,11 +127,11 @@ func fullset(bt *btree.BTree, count, factor int) {
 }
 
 func containsEquals(bt *btree.BTree, count, factor int, keys []*btree.TestKey) {
-    fmt.Println("Contains Equals")
+    log.Println("Contains Equals")
     for i := 0; i < factor; i++ {
         for j := 0; j < count; j++ {
             key := *keys[j]
-            key.Id = (i * count) + j
+            key.Id = int64((i * count) + j)
             if bt.Equals(&key) == false {
                 panic("Does not equal key")
             }
@@ -147,7 +149,7 @@ func containsEquals(bt *btree.BTree, count, factor int, keys []*btree.TestKey) {
 func lookup(bt *btree.BTree, count, factor int, keys []*btree.TestKey,
     values []*btree.TestValue) {
 
-    fmt.Println("Lookup")
+    log.Println("Lookup")
     for i := 0; i < count; i++ {
         refvals := make([]string, 0)
         for j := 0; j < count; j++ {

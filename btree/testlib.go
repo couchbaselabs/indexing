@@ -31,7 +31,7 @@ var testconf1 = Config{
 
 type TestKey struct {
     K   string
-    Id  int
+    Id  int64
 }
 type TestValue struct {
     V string
@@ -94,7 +94,7 @@ func TestData(count int, seed int64) ([]*TestKey, []*TestValue) {
     keys := make([]*TestKey, 0, count)
     values := make([]*TestValue, 0, count)
     for i := 0; i < count; i++ {
-        keys = append(keys, &TestKey{RandomKey(rnd), i})
+        keys = append(keys, &TestKey{RandomKey(rnd), int64(i)})
         values = append(values, &TestValue{RandomValue(rnd) + "Value"})
     }
     return keys, values

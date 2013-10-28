@@ -1,16 +1,12 @@
 package main
 
 import (
-    //"bytes"
-    "flag"
-    "fmt"
     "log"
     "github.com/couchbaselabs/indexing/btree"
     "os"
     "time"
 )
 
-var _ = fmt.Sprintln("keep 'fmt' import during debugging", time.Now(), os.O_WRONLY)
 
 var conf = btree.Config{
     Idxfile: "./data/indexfile.dat",
@@ -18,10 +14,10 @@ var conf = btree.Config{
     IndexConfig: btree.IndexConfig{
         Sectorsize: 512,
         Flistsize:  4000 * btree.OFFSET_SIZE,
-        Blocksize:  512,
+        Blocksize:  4 * 1024,
     },
     Maxlevel:      6,
-    RebalanceThrs: 3,
+    RebalanceThrs: 25,
     AppendRatio:   0.7,
     DrainRate:     400,
     MaxLeafCache:  1000,
@@ -31,7 +27,6 @@ var conf = btree.Config{
 }
 
 func main() {
-    flag.Parse()
     //os.Remove(conf.Idxfile)
     //os.Remove(conf.Kvfile)
     if conf.Debug {
@@ -42,22 +37,22 @@ func main() {
     bt := btree.NewBTree(btree.NewStore(conf))
 
     seed := time.Now().UnixNano()
-    fmt.Println("Seed:", seed)
+    log.Println("Seed:", seed)
 
-    count, items := 3, 10000
+    count, items := 100, 10000
     chans := []chan []interface{}{
         make(chan []interface{}, 100), make(chan []interface{}, 100),
         make(chan []interface{}, 100), make(chan []interface{}, 100),
     }
     endchan := make(chan []interface{}, count)
     check := false
-    go doinsert(0, chans[0], chans[1], chans[2], check)
-    go dolookup(chans[1], endchan, check)
-    go dolookup(chans[1], endchan, check)
-    go dolookup(chans[1], endchan, check)
-    go dolookup(chans[1], endchan, check)
-    go doremove(chans[2], chans[3], check)
-    go dolookupNeg(chans[3], endchan, check)
+    go doinsert(bt, 0, chans[0], chans[1], chans[2], check)
+    go dolookup(bt, chans[1], endchan, check)
+    go dolookup(bt, chans[1], endchan, check)
+    go dolookup(bt, chans[1], endchan, check)
+    go dolookup(bt, chans[1], endchan, check)
+    go doremove(bt, chans[2], chans[3], check)
+    go dolookupNeg(bt, chans[3], endchan, check)
     // Prepopulate
     //for i := 0; i < count; i++ {
     //    keys, values := btree.TestData(items, seed+int64(i))
@@ -78,13 +73,13 @@ func main() {
         }
     }()
     for i := 0; i < count; i++ {
-        //bt.Check()
         <-endchan
         <-endchan
         <-endchan
         <-endchan
         <-endchan
         log.Println("Done ... ", i)
+        bt.Check()
     }
     bt.Drain()
     bt.Stats(true)
@@ -92,14 +87,16 @@ func main() {
     bt.Close()
 }
 
-func doinsert(count int, in chan []interface{}, out, outr chan []interface{}, check bool) {
+func doinsert(
+    bt *btree.BTree, count int, in chan []interface{}, out, 
+    outr chan []interface{}, check bool) {
+
     for {
         cmd := <-in
-        bt := btree.NewBTree(btree.NewStore(conf))
         keys, values := cmd[0].([]*btree.TestKey), cmd[1].([]*btree.TestValue)
         for i := range keys {
             k, v := keys[i], values[i]
-            k.Id = count
+            k.Id = int64(count)
             count++
             bt.Insert(k, v)
         }
@@ -122,7 +119,6 @@ func doinsert(count int, in chan []interface{}, out, outr chan []interface{}, ch
                 lvals = append(lvals, values[i])
             }
         }
-        bt.Close()
         for i := 0; i < 4; i++ {
             out <- []interface{}{lkeys, lvals}
         }
@@ -130,12 +126,13 @@ func doinsert(count int, in chan []interface{}, out, outr chan []interface{}, ch
     }
 }
 
-func dolookup(in chan []interface{}, out chan []interface{}, check bool) {
+func dolookup(
+    bt *btree.BTree, in chan []interface{}, out chan []interface{}, check bool) {
+
     keys, values := make([]*btree.TestKey, 0), make([]*btree.TestValue, 0)
     count := 0
     for {
         cmd := <-in
-        bt := btree.NewBTree(btree.NewStore(conf))
         keys = append(keys[:len(keys)/4], cmd[0].([]*btree.TestKey)...)
         values = append(values[:len(values)/4], cmd[1].([]*btree.TestValue)...)
         for i := range keys {
@@ -153,21 +150,21 @@ func dolookup(in chan []interface{}, out chan []interface{}, check bool) {
                 val = <-ch
             }
             if found == false {
-                fmt.Println("could not find for ", k, "; expected", v.V, "got", vals)
+                log.Printf("could not find for %v, expected %v: %v", k, v.V, vals)
             }
         }
         if check {
             bt.Check()
         }
-        bt.Close()
         out <- []interface{}{keys, values}
     }
 }
 
-func doremove(in chan []interface{}, out chan []interface{}, check bool) {
+func doremove(
+    bt *btree.BTree, in chan []interface{}, out chan []interface{}, check bool) {
+
     for {
         cmd := <-in
-        bt := btree.NewBTree(btree.NewStore(conf))
         rmkeys, rmvals := cmd[0].([]*btree.TestKey), cmd[1].([]*btree.TestValue)
         for i := 0; i < len(rmkeys); i++ {
             k, _ := rmkeys[i], rmvals[i]
@@ -176,16 +173,16 @@ func doremove(in chan []interface{}, out chan []interface{}, check bool) {
         if check {
             bt.Check()
         }
-        bt.Close()
         out <- []interface{}{rmkeys, rmvals}
     }
 }
 
-func dolookupNeg(in chan []interface{}, out chan []interface{}, check bool) {
+func dolookupNeg(
+    bt *btree.BTree, in chan []interface{}, out chan []interface{}, check bool) {
+
     count := 0
     for {
         cmd := <-in
-        bt := btree.NewBTree(btree.NewStore(conf))
         keys, values := cmd[0].([]*btree.TestKey), cmd[1].([]*btree.TestValue)
         for i := range keys {
             k := keys[i]
@@ -201,7 +198,6 @@ func dolookupNeg(in chan []interface{}, out chan []interface{}, check bool) {
         if check {
             bt.Check()
         }
-        bt.Close()
         out <- []interface{}{keys, values}
     }
 }
