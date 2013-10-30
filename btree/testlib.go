@@ -18,7 +18,7 @@ var testconf1 = Config{
     IndexConfig: IndexConfig{
         Sectorsize: 512,
         Flistsize:  1000 * OFFSET_SIZE,
-        Blocksize:  64 * 1024,
+        Blocksize:  4 * 1024,
     },
     Maxlevel:      6,
     RebalanceThrs: 6,
