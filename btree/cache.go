@@ -69,6 +69,7 @@ func NewDCache(blocksize, hashsize int64, hashmask int64) *DCache {
 func (cache *DCache) cache(fpos int64, node Node) bool {
     idx := cache.indexFor(fpos)
     item := DCacheItem{fpos: fpos, node: node}
+
     // Prepend the new key.
     for {
         hash := (*[]unsafe.Pointer)(atomic.LoadPointer(&(cache.hash)))
@@ -78,6 +79,7 @@ func (cache *DCache) cache(fpos int64, node Node) bool {
             break
         }
     }
+
     // Walk the remaining list to remove the old entry, if present.
     for {
         var retry bool
@@ -105,8 +107,7 @@ func (cache *DCache) cache(fpos int64, node Node) bool {
 func (cache *DCache) cacheLookup(fpos int64) Node {
     idx := cache.indexFor(fpos)
     hash := (*[]unsafe.Pointer)(atomic.LoadPointer(&(cache.hash)))
-    addr := &((*hash)[idx])
-    head := (*DCacheItem)(atomic.LoadPointer(addr))
+    head := (*DCacheItem)(atomic.LoadPointer(&((*hash)[idx]))
     for head != nil {
         if head.fpos == fpos {
             return head.node
