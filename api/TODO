@@ -1,0 +1,19 @@
+Manik's concern on the too much of data exchange between query and indexing.
+
+  manik: " it seems to me that a lot of data can be potentially exchanged
+  between the indexer nodes and the query engine. This is due to the fact that
+  the protocol doesn't provide a mechanism to filter the scan at results on the
+  indexer side.  For example if I am interested in only those people living a
+  particular  city who are above the age of 10, assuming that the index has been
+  created on the city name the indexer will  basically return the list of
+  everyone living in that city.  It will be up to the query engine to do the
+  filtering of the results. "
+
+  Siri: " Yes - you’re right. The query engine is the filter - so to realize what
+  you suggest, one could co-locate the query and the index. In general,
+  query is a stateless component, so it could redirect all or part of a
+  query (with intermediate results) to any other node if it can execute more
+  efficiently rather than fetching data.
+  We are definitely treading new ground here. Keeping index, storage and
+  query separate is new to me. So I really want a prototype to benchmark to
+  figure out the bottlenecks. "
