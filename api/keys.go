@@ -10,18 +10,10 @@ import (
     "encoding/binary"
 )
 
-type Ord int8
-
-const (
-    LT    Ord = -1
-    EQUAL Ord = 0
-    GT    Ord = 1
-)
-
 var (
-    NegInf = NInf{}
-    PosInf = PInf{}
-    infs = map[int]Key{1: PosInf, -1: NegInf}
+    NInf = nInf{}
+    PInf = pInf{}
+    infs = map[int]Key{1: PInf, -1: NInf}
 )
 
 // Inf returns a Key that is "bigger than" any other item, if sign is positive.
@@ -32,59 +24,40 @@ func Inf(sign int) Key {
 
 
 // Negative infinity
-type NInf struct{}
+type nInf struct{}
 
-func (NInf) Less(Key) bool {
+func (nInf) Less(Key) bool {
     return true
 }
 
-func (NInf) Compare(Key) Ord {
-    return EQUAL
-}
-
-func (NInf) Bytes() []byte {
+func (nInf) Bytes() []byte {
     return []byte{}
 }
 
 // Positive inifinity
-type PInf struct{}
+type pInf struct{}
 
-func (PInf) Less(Key) bool {
+func (pInf) Less(Key) bool {
     return false
 }
 
-func (PInf) Compare(Key) Ord {
-    return EQUAL
-}
-
-func (PInf) Bytes() []byte {
+func (pInf) Bytes() []byte {
     return []byte{}
 }
 
 // []byte
 type Bytes []byte
 
-func (this Bytes) Compare(than Key) (result Ord) {
+func (this Bytes) Less(than Key) (rc bool) {
     switch than.(type) {
-    case NInf:
-        result = GT
+    case nInf:
+        rc = false
     case Bytes:
-        switch bytes.Compare(this, than.(Bytes)) {
-        case -1:
-            result = LT
-        case 0:
-            result = EQUAL
-        case 1:
-            result = GT
-        }
-    case PInf:
-        result = LT
+        rc = bytes.Compare(this, than.(Bytes)) < 0
+    case pInf:
+        rc = true
     }
     return
-}
-
-func (this Bytes) Less(than Key) (rc bool) {
-    return this.Compare(than) == LT
 }
 
 func (this Bytes) Bytes() []byte {
@@ -94,12 +67,16 @@ func (this Bytes) Bytes() []byte {
 // JSON
 type JSON []byte
 
-func (this JSON) Less(than Key) (rc bool) { // TODO: Incompleted
-    return this.Compare(than) == LT
-}
-
-func (this JSON) Compare(than Key) Ord { // TODO: Incomplete
-    return LT
+func (this JSON) Less(than Key) (rc bool) { // TODO: To be completed
+    switch than.(type) {
+    case nInf:
+        rc = false
+    case JSON:
+        rc = false
+    case pInf:
+        rc = true
+    }
+    return
 }
 
 func (this JSON) Bytes() []byte {
@@ -107,32 +84,21 @@ func (this JSON) Bytes() []byte {
 }
 
 // Int is UInt64
-type Int64 int64
+type Int int64
 
-func (x Int64) Compare(than Key) (result Ord) {
+func (x Int) Less(than Key) (rc bool) {
     switch than.(type) {
-    case NInf:
-        result = GT
-    case Int64:
-        switch {
-        case x < than.(Int64):
-            result = LT
-        case x == than.(Int64):
-            result = EQUAL
-        case x > than.(Int64):
-            result = GT
-        }
-    case PInf:
-        result = LT
+    case nInf:
+        rc = false
+    case Int:
+        rc = x < than.(Int)
+    case pInf:
+        rc = true
     }
     return
 }
 
-func (x Int64) Less(than Key) bool {
-    return x.Compare(than) == LT
-}
-
-func (x Int64) Bytes() []byte {
+func (x Int) Bytes() []byte {
     data := make([]byte, 8)
     binary.PutVarint(data, int64(x))
     return data
@@ -141,27 +107,16 @@ func (x Int64) Bytes() []byte {
 // String
 type String string
 
-func (x String) Compare(than Key) (result Ord) {
+func (x String) Less(than Key) (rc bool) {
     switch than.(type) {
-    case NInf:
-        result = GT
-    case String:
-        switch {
-        case x < than.(String):
-            result = LT
-        case x == than.(String):
-            result = EQUAL
-        case x > than.(String):
-            result = GT
-        }
-    case PInf:
-        result = LT
+    case nInf:
+        rc = false
+    case Int:
+        rc = x < than.(String)
+    case pInf:
+        rc = true
     }
     return
-}
-
-func (x String) Less(than Key) bool {
-    return x.Compare(than) == LT
 }
 
 func (x String) Bytes() []byte {
