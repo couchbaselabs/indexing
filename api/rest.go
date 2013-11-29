@@ -1,19 +1,19 @@
-// REST APIs
-// TODO: Implement STATS command.
-// TODO: Change the server implementation URL to follow REST philosphy.
+// REST API to access indexing.
+
+// TODO: Add STATS command.
 
 package api
 
 type RequestType int
 
 const (
-    CREATE RequestType = iota // POST /indexes/create
-    DROP                      // DELETE /indexes/uuid
-    LIST                      // GET /indexes/list
-    SCAN                      // GET /indexes/uuid/scan
-    STATS                     // GET /indexes/stats
-    NODES                     // GET /indexes/nodes
-    NOTIFY                    // GET /indexes/notify
+    CREATE RequestType = iota   // /create
+    DROP                        // /drop
+    LIST                        // /list
+    SCAN                        // /scan
+    STATS                       // /stats
+    NODES                       // /nodes
+    NOTIFY                      // /notify
 )
 
 // URL encoded query params
@@ -30,7 +30,7 @@ type QueryParams struct {
 // they can choose the access the underlying interfaces directly.
 type IndexRequest struct {
     Type       RequestType
-    Index      IndexInfo
+    Indexinfo  IndexInfo
     ServerUuid string
     Params     QueryParams
 }
@@ -54,11 +54,11 @@ type IndexError struct {
 }
 
 type IndexMetaResponse struct {
-    Status     ResponseStatus
-    Indexes    []IndexInfo
-    ServerUuid string
-    Nodes      []NodeInfo
-    Errors     []IndexError
+    Status  ResponseStatus
+    Indexes []IndexInfo
+    ServerUuid    string
+    Nodes   []string
+    Errors  []IndexError
 }
 
 type IndexScanResponse struct {
