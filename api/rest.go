@@ -1,4 +1,5 @@
-// REST APIs
+// REST API to access indexing.
+
 // TODO: Add STATS command.
 
 package api
@@ -10,6 +11,8 @@ const (
     LIST                        // /list
     SCAN                        // /scan
     STATS                       // /stats
+    NODES                       // /nodes
+    NOTIFY                      // /notify
 )
 
 // URL encoded query params
@@ -27,6 +30,7 @@ type QueryParams struct {
 type IndexRequest struct {
     Type       RequestType
     Indexinfo  IndexInfo
+    ServerUuid string
     Params     QueryParams
 }
 
@@ -35,6 +39,7 @@ type ResponseStatus int
 const (
     SUCCESS ResponseStatus = iota
     ERROR
+    INVALID_CACHE
 )
 
 type IndexRow struct {
@@ -50,6 +55,8 @@ type IndexError struct {
 type IndexMetaResponse struct {
     Status  ResponseStatus
     Indexes []IndexInfo
+    ServerUuid    string
+    Nodes   []string
     Errors  []IndexError
 }
 
