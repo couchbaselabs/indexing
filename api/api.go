@@ -74,7 +74,7 @@ const (
 // Complexity characterizes space and time characteristics of the algorithm
 type Complexity int
 const (
-    O1 Complexity = iota
+    O1     Complexity = iota
     Ologm
     Ologn
     Om
@@ -99,10 +99,10 @@ type TraitInfo struct {
     WorstSpace Complexity
 }
 
-// IndexCatalog is the interface for disk-based catalog for Index Manager
-type IndexCatalog interface {
+// Indexer is the interface into the index engine
+type IndexManager interface {
     // Create builds an instance of index
-    Create(indexInfo IndexInfo) (string, error)
+    Create(indexInfo IndexInfo) (string, IndexInfo, error)
 
     // Drop kills an instance of an index
     Drop(uuid string) (string, error)
@@ -132,6 +132,16 @@ type Key interface {
 }
 
 type Value interface {
+=======
+}
+
+type Key interface {
+    Bytes() []byte      // content of key as byte representation
+    Less(than Key) bool // compare whether `this` key is less than `than` key
+}
+
+type Value interface{
+>>>>>>> Another iteration on indexing apis.
     Bytes() []byte // content of value, typically document-id
 }
 
@@ -140,6 +150,7 @@ type KV [2]interface{} // [Key, Value]
 // Algorithm is the basic capability of any index algorithm
 type Finder interface {
     Name() string
+    Purge()
     Trait(operator interface{}) TraitInfo
 }
 
@@ -159,6 +170,9 @@ type Exister interface {
 // Looker is a class of algorithms that allow looking up a key in an index.
 // Usually, being able to look up a key means we can iterate through all keys
 // too, and so that is introduced here as well.
+//
+// TODO: Define the semantics of buffer size of channels that are returned by
+// the following method receiver.
 type Looker interface {
     Exister
     Lookup(key Key) (chan Value, chan error)
