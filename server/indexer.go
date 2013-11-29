@@ -1,17 +1,31 @@
-// Disk based catalog manager implementing `Indexer` interface
+// Disk based catalog manager implementing `Indexer` interface. On disk
+// catalog file has the following format, all fields encoded using
+// "encoding/gob" library.
+//
+//   offset 0   count   int32
+//   offset 4   uuid    string
+//              index1  IndexInfo
+//              index2  IndexInfo
+//              ...
+//              <upto count index>
+
+// The disk based catalog indexer supports all the APIs defined by `Indexer`
+// interface.
+
 package server
 
 import (
-    "os"
-    "fmt"
-    "errors"
     "bytes"
-    "io/ioutil"
     "encoding/gob"
+    "errors"
+    "fmt"
+    "os"
+    "github.com/couchbaselabs/indexing/api"
+    "github.com/couchbaselabs/indexing/llrb"
+    "github.com/nu7hatch/gouuid"  // TODO: Remove this dependancy ??
+    "io/ioutil"
     "path/filepath"
     "sync"
-    "github.com/couchbaselabs/indexing/api"
-    "github.com/nu7hatch/gouuid"  // TODO: Remove this dependancy ??
 )
 
 const (
@@ -22,145 +36,150 @@ const (
 type IndexCatalog struct {
     sync.RWMutex
     DefaultLimit int
+    Uuid         string
     Datadir      string
+    File         string
     Indexes      map[string]*api.IndexInfo
 }
 
-func NewIndexCatalog(datadir string) (api.Indexer, error) {
-    var fd      *os.File
-    var bytebuf []byte
-    var err     error
-
-    file := filepath.Join(datadir, CATALOGFILE)
-    // If catalog file is not present, create and close.
-    if _, err = os.Stat(file); err != nil {
-        if fd, err = os.Create(file); err != nil {
-            return nil, err
-        }
-        fd.Close()
+func NewIndexCatalog(datadir string) (indexer *IndexCatalog, err error) {
+    indexer = &IndexCatalog{
+        DefaultLimit: DEFAULT_LIMIT,
+        Datadir: datadir,
+        File: filepath.Join(datadir, CATALOGFILE),
     }
-
-    // And, open the catalog file.
-    if fd, err = os.OpenFile(file, os.O_RDONLY, 0660); err != nil {
+    if err = indexer.tryCreate(); err != nil {
         return nil, err
     }
-    defer fd.Close()
-
-    // Read IndexInfo list, encoded in GoB format, from CATALOGFILE
-    var count int32
-    if bytebuf, err = ioutil.ReadAll(fd); err != nil {
+    if err = indexer.loadCatalog(); err != nil {
         return nil, err
-    }
-    gdec := gob.NewDecoder(bytes.NewBuffer(bytebuf))
-    gdec.Decode(&count)
-    i, indexes := int32(0), make(map[string]*api.IndexInfo)
-    for i < count {
-        info := api.IndexInfo{}
-        gdec.Decode(&info)
-        indexes[info.Uuid] = &info
-    }
-    indexer := &IndexCatalog{
-        DefaultLimit: DEFAULT_LIMIT, Datadir: datadir, Indexes: indexes,
     }
     return indexer, nil
 }
 
-// For SCAN query, set the default limit.
-func (indexer *IndexCatalog) SetLimit(limit int) {
-    indexer.DefaultLimit = limit
-}
+// Clean up the disk catalog
+func (indexer *IndexCatalog) Purge() (err error) {
+    indexer.Lock() // Write lock !!
+    defer indexer.Unlock()
 
-func (indexer *IndexCatalog) Create(index *api.IndexInfo) error {
-    var err error
-
-    uuid, err := uuid.NewV4()
-    if err != nil {
+    if err = os.Remove(indexer.File); err != nil {
         return err
     }
-    index.Uuid = fmt.Sprintf("%v", uuid)
-
-    if err = indexer.persist(); err != nil {
-        return err
-    }
-
-    // Add to indexer catalog
-    indexer.Lock()
-    indexer.Indexes[index.Uuid] = index
-    indexer.Unlock()
-
-    index.Index = nil
-    // TODO: This has to be one of the create calls to index algorithm,
-    // based on `Using`
-    // TODO: Push the expression for the new index to projector process.
-    // Also update the router process on the same. Return only after that.
-
+    indexer.Datadir = ""
+    indexer.Indexes = nil
     return nil
 }
 
-func (indexer *IndexCatalog) Drop(uuid string) error {
-    var err error
+// set the default limit for SCAN command.
+func (indexer *IndexCatalog) SetLimit(limit int) {
+    indexer.Lock() // Write lock !!
+    defer indexer.Unlock()
 
-    if _, ok := indexer.Indexes[uuid]; ok {
-        // Remove from indexer catalog
-        indexer.Lock()
-        delete(indexer.Indexes, uuid)
-        indexer.Unlock()
-
-        // TODO: Drop the index from router and projector and then drop it
-        // from the indexer node.
-        // TODO: Invoke the index engine api to delete the index.
-        if err = indexer.persist(); err != nil {
-            return err
-        }
-        return nil
-    } else {
-        return errors.New("uuid not found in index catalog")
-    }
+    indexer.DefaultLimit = limit
 }
 
-func (indexer *IndexCatalog) List() ([]api.IndexInfo, error) {
+// Get the catalog's unique id, which gets updated when ever a new index is
+// created or dropped.
+func (indexer *IndexCatalog) GetUuid() string {
+    indexer.RLock()
+    defer indexer.RUnlock()
+    return indexer.Uuid
+}
+
+func (indexer *IndexCatalog) Create(indexinfo api.IndexInfo) (
+    string, api.IndexInfo, error) {
+
+    var err  error
+
+    // Generate UUID for the index.
+    if uvalue, err := uuid.NewV4(); err == nil {
+        indexinfo.Uuid = fmt.Sprintf("%v", uvalue)
+        // Add to indexer catalog
+        indexer.Lock() // Write lock !!
+        defer indexer.Unlock()
+        indexer.Indexes[indexinfo.Uuid] = &indexinfo
+
+        // Save to disk
+        if err = indexer.saveCatalog(); err == nil {
+            err = getIndexEngine(&indexinfo)
+        }
+    }
+    return indexer.Uuid, indexinfo, err
+}
+
+func (indexer *IndexCatalog) Drop(uuid string) (string, error) {
+    var err error
+
+    if indexinfo, ok := indexer.Indexes[uuid]; ok {
+        indexinfo.Index.Purge()
+
+        // Remove from indexer catalog
+        indexer.Lock() // Write lock !!
+        defer indexer.Unlock()
+
+        delete(indexer.Indexes, uuid)
+
+        indexinfo.Index = nil
+        err = indexer.saveCatalog()
+    } else {
+        err = errors.New("uuid not found in index catalog")
+    }
+    return indexer.Uuid, err
+}
+
+func (indexer *IndexCatalog) List(serverUuid string) (string, []api.IndexInfo, error) {
+    var indexinfos []api.IndexInfo
     indexer.RLock()
     defer indexer.RUnlock()
 
-    indexinfo := make([]api.IndexInfo, 0, len(indexer.Indexes))
-    for _, index := range indexer.Indexes {
-        indexClone := *index // Copy
-        indexClone.Index = nil
-        indexinfo = append(indexinfo, indexClone)
+    if indexer.Uuid != serverUuid {
+        indexinfos = make([]api.IndexInfo, 0, len(indexer.Indexes))
+        for _, index := range indexer.Indexes {
+            indexClone := *index // Copy
+            indexClone.Index = nil
+            indexinfos = append(indexinfos, indexClone)
+        }
     }
-    return indexinfo, nil
+    return indexer.Uuid, indexinfos, nil
 }
 
-func (indexer *IndexCatalog) Index(uuid string) *api.IndexInfo {
+func (indexer *IndexCatalog) Index(uuid string) (api.IndexInfo, error) {
     indexer.RLock()
     defer indexer.RUnlock()
 
     for _, index := range indexer.Indexes {
         if index.Uuid == uuid {
-            return index
+            return *index, nil
         }
     }
-    return nil
+    return api.IndexInfo{}, errors.New("Invalid uuid")
 }
 
-func (indexer *IndexCatalog) persist() error {
+// save catalog information on disk, the format of the catalog file is
+// described at the top.
+func (indexer *IndexCatalog) saveCatalog() (err error) {
     var fd *os.File
-    var err error
 
-    indexer.RLock()
-    defer indexer.RUnlock()
-
-    file := filepath.Join(indexer.Datadir, CATALOGFILE)
-    // Persist the index catalog.
-    if fd, err = os.OpenFile(file, os.O_WRONLY, 0660); err != nil {
+    // Open the catalog file
+    if fd, err = os.OpenFile(indexer.File, os.O_WRONLY, 0660); err != nil {
         return err
     }
     defer fd.Close()
 
-    count := int32(len(indexer.Indexes))
+    // gob-encoder
     buf := new(bytes.Buffer)
     genc := gob.NewEncoder(buf)
-    genc.Encode(count)
+
+    // Write the count
+    genc.Encode(int32(len(indexer.Indexes)))
+
+    // Write the uuid
+    if uvalue, err := uuid.NewV4(); err == nil {
+        indexer.Uuid = fmt.Sprintf("%v", uvalue)
+        genc.Encode(indexer.Uuid)
+    }
+
+    // Write IndexInfo
     for _, index := range indexer.Indexes {
         indexClone := *index // Copy
         indexClone.Index = nil
@@ -169,5 +188,68 @@ func (indexer *IndexCatalog) persist() error {
     if _, err = fd.Write(buf.Bytes()); err != nil {
         return err
     }
+
     return nil
+}
+
+// load catalog information from disk, the format of the catalog file is
+// described at the top.
+func (indexer *IndexCatalog) loadCatalog() (err error) {
+    var fd      *os.File
+    var bytebuf []byte
+
+    // open the catalog file.
+    if fd, err = os.OpenFile(indexer.File, os.O_RDONLY, 0660); err != nil {
+        return err
+    }
+    defer fd.Close()
+
+    // gob-decoder
+    if bytebuf, err = ioutil.ReadAll(fd); err != nil {
+        return err
+    }
+    gdec := gob.NewDecoder(bytes.NewBuffer(bytebuf))
+
+    // read count of indexes saved in the catalog file.
+    var count int32
+    gdec.Decode(&count)
+
+    // read catalog uuid
+    gdec.Decode(&indexer.Uuid)
+
+    // read the IndexInfo from the catalog file.
+    indexes := make(map[string]*api.IndexInfo)
+    for i := int32(0); i < count; i++ {
+        indexinfo := api.IndexInfo{}
+        gdec.Decode(&indexinfo)
+        indexes[indexinfo.Uuid] = &indexinfo
+        if err = getIndexEngine(&indexinfo); err != nil {
+            return err
+        }
+    }
+    indexer.Indexes = indexes
+    return nil
+}
+
+// If catalog file is not present, create and close.
+func (indexer *IndexCatalog) tryCreate() (err error) {
+    var fd *os.File
+    if _, err = os.Stat(indexer.File); err != nil {
+        if fd, err = os.Create(indexer.File); err == nil {
+            fd.Close()
+        }
+    }
+    return
+}
+
+// Instantiate index engine
+func getIndexEngine(index *api.IndexInfo) (err error) {
+    index.Index = nil
+    switch index.Using {
+    case api.Llrb:
+        index.Index = llrb.NewIndex(index.Name)
+    default:
+        err = fmt.Errorf("Invalid index-type, `%v`", index.Using)
+    }
+    return
 }

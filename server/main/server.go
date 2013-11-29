@@ -1,107 +1,174 @@
 // Server application serves index engine via rest API.
-// TODO : Create a goroutine that will pull mutations from UPR and update the
-// index.
+// TODO :
+//  - Create a goroutine that will pull mutations from UPR and update the
+//    index.
 
 package main
 
 import (
-    "net/http"
-    "encoding/json"
-    "strconv"
-    "errors"
     "bytes"
+    "log"
+    "encoding/json"
+    "errors"
     "github.com/couchbaselabs/indexing/api"
     "github.com/couchbaselabs/indexing/server"
+    "net/http"
+    "strconv"
+    "sync"
 )
 
-var indexer api.Indexer
+var indexer api.IndexManager
+var longPolls = make([]chan interface{}, 0)
+var mutex sync.Mutex
 
 func main() {
     var err error
 
     // Create indexer catalog
-    indexer, err = server.NewIndexCatalog("./")
-    if  err != nil {
+    if indexer, err = server.NewIndexCatalog("./"); err != nil {
         panic(err)
     }
 
+    addr := ":8094"
     // Subscribe to HTTP server handlers
     http.HandleFunc("/create", handleCreate)
     http.HandleFunc("/drop", handleDrop)
     http.HandleFunc("/list", handleList)
     http.HandleFunc("/scan", handleScan)
+    http.HandleFunc("/nodes", handleNodes)
+    http.HandleFunc("/notify", handleNotify)
     http.HandleFunc("/stats", handleStats)
-    http.ListenAndServe(":8094", nil)
+    log.Println("Listening on", addr)
+    if err := http.ListenAndServe(addr, nil); err != nil {
+        log.Println("Fatal:", err)
+    }
 }
 
 // /create
 func handleCreate(w http.ResponseWriter, r *http.Request) {
+    var res      api.IndexMetaResponse
+    var servUuid string
     var err      error
-    var buf      []byte
 
-    // Get IndexInfo, without the `uuid`.
-    index := handleRequest(r)
+    indexinfo := indexRequest(r).Indexinfo // Get IndexInfo, without the `uuid`
     // Normalize IndexInfo
-    if index.Exprtype == "" {
-        index.Exprtype = api.N1QL
-        index.Expression = index.CreateStmt
+    if indexinfo.Exprtype == "" {
+        indexinfo.Exprtype = api.N1QL
+        indexinfo.Expression = indexinfo.CreateStmt
     }
 
-    // Create.
-    err = indexer.Create(index);
-
-    // Send the reponse.
-    res := indexMetaResponse(index, err)
-    header := w.Header()
-    header["Content-Type"] = []string{"encoding/json"}
-    buf, _ = json.Marshal(&res)
-    w.Write(buf)
+    if servUuid, indexinfo, err = indexer.Create(indexinfo); err == nil {
+        indexinfo.Index = nil
+        res = api.IndexMetaResponse{
+            Status: api.SUCCESS,
+            Indexes: []api.IndexInfo{indexinfo},
+            ServerUuid: servUuid,
+        }
+        notifyLongPolls()
+        log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.CreateStmt)
+    } else {
+        indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
+        res = api.IndexMetaResponse{
+            Status: api.ERROR,
+            Errors: []api.IndexError{indexerr},
+        }
+        log.Println("ERROR: Failed to create index", err)
+    }
+    sendResponse(w, res)
 }
 
 // /drop
 func handleDrop(w http.ResponseWriter, r *http.Request) {
+    var res api.IndexMetaResponse
+
+    indexinfo := indexRequest(r).Indexinfo
+    if servUuid, err := indexer.Drop(indexinfo.Uuid); err == nil {
+        res = api.IndexMetaResponse{
+            Status: api.SUCCESS,
+            ServerUuid: servUuid,
+        }
+        notifyLongPolls()
+        log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
+    } else {
+        indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
+        res = api.IndexMetaResponse{
+            Status: api.ERROR,
+            Errors: []api.IndexError{indexerr},
+        }
+        log.Println("ERROR: Failed to drop index", err)
+    }
+    sendResponse(w, res)
+}
+
+// /list
+func handleList(w http.ResponseWriter, r *http.Request) {
+    var res api.IndexMetaResponse
+
+    serverUuid := indexRequest(r).ServerUuid
+    if servUuid, indexes, err := indexer.List(serverUuid); err == nil {
+        res = api.IndexMetaResponse{
+            Status: api.SUCCESS,
+            Indexes: indexes,
+            ServerUuid: servUuid,
+        }
+        log.Printf("List server %v", indexer.GetUuid())
+    } else {
+        indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
+        res = api.IndexMetaResponse{
+            Status: api.ERROR,
+            Errors: []api.IndexError{indexerr},
+        }
+        log.Println("ERROR: Listing server", err)
+    }
+    sendResponse(w, res)
+}
+
+// /nodes
+func handleNodes(w http.ResponseWriter, r *http.Request) {
+    nodes := []string{"localhost:8094"}
+    res := api.IndexMetaResponse{Status: api.SUCCESS, Nodes: nodes, Errors: nil}
+    sendResponse(w, res)
+    log.Printf("Nodes")
+}
+
+// /notify
+func handleNotify(w http.ResponseWriter, r *http.Request) {
+    var res api.IndexMetaResponse
+
+    if servUuid, _, err := indexer.List(""); err == nil {
+        req := indexRequest(r)
+        if req.ServerUuid == servUuid {
+            ch := make(chan interface{}, 1)
+            mutex.Lock()
+            longPolls = append(longPolls, ch)
+            mutex.Unlock()
+            <-ch
+        }
+        res = api.IndexMetaResponse{
+            Status: api.INVALID_CACHE,
+            ServerUuid: servUuid,
+        }
+    } else {
+        indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
+        res = api.IndexMetaResponse{
+            Status: api.ERROR,
+            Errors: []api.IndexError{indexerr},
+        }
+    }
+    sendResponse(w, res)
+}
+
+// /scan
+func handleScan(w http.ResponseWriter, r *http.Request) {
     var err error
 
-    // Gather `uuid` to remove
-    index := handleRequest(r)
-
-    // Drop.
-    if err == nil {
-        err = indexer.Drop(index.Uuid)
-    }
-
-    // Send back the response
-    res := indexMetaResponse(index, err)
-    header := w.Header()
-    header["Content-Type"] = []string{"encoding/json"}
-    buf, _ := json.Marshal(&res)
-    w.Write(buf)
-}
-
-// /list.
-func handleList(w http.ResponseWriter, r *http.Request) {
-    indexes, _ := indexer.List()
-    res := api.IndexMetaResponse{
-        Status:  api.SUCCESS, Indexes: indexes, Errors:  nil,
-    }
-    header := w.Header()
-    header["Content-Type"] = []string{"encoding/json"}
-    buf, _ := json.Marshal(&res)
-    w.Write(buf)
-}
-
-// /scan.
-func handleScan(w http.ResponseWriter, r *http.Request) {
-    var err      error
-
-    // Gather request
-    index := handleRequest(r)
+    indexinfo := indexRequest(r).Indexinfo // Gather request
 
     // Gather and normalizequery parameters
     r.ParseForm()
     q := api.QueryParams{
-        Low:       api.Key(r.Form["Low"][0]),
-        High:      api.Key(r.Form["High"][0]),
+        Low:       api.Key(api.String(r.Form["Low"][0])),
+        High:      api.Key(api.String(r.Form["High"][0])),
         Inclusion: api.Inclusion(r.Form["Inclusion"][0]),
     }
     offset := r.Form["Offset"][0]
@@ -118,24 +185,21 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
     }
 
     // Scan
-    index = indexer.Index(index.Uuid)
     rows := make([]api.IndexRow, 0)
-    if err == nil {
-        if q.Low == nil && q.High == nil {            // Scan query
-            rows, err = scanQuery(index, q.Offset, q.Limit)
-        } else if bytes.Compare(q.Low, q.High) == 0 { // Lookup query
-            rows, err =
-                rangeQuery(index, q.Low, q.High, q.Inclusion, q.Offset, q.Limit)
-        } else if q.Low != nil && q.High != nil {  // Range query
-            rows, err = lookupQuery(index, q.Low, q.Offset, q.Limit)
+    if indexinfo, err = indexer.Index(indexinfo.Uuid); err == nil {
+        if q.Low == nil && q.High == nil {
+            rows, err = scanQuery(
+                &indexinfo, q.Offset, q.Limit)
+        } else if bytes.Compare(q.Low.Bytes(), q.High.Bytes()) == 0 {
+            rows, err = rangeQuery(
+                &indexinfo, q.Low, q.High, q.Inclusion, q.Offset, q.Limit)
+        } else if q.Low != nil && q.High != nil {
+            rows, err = lookupQuery(
+                &indexinfo, q.Low, q.Offset, q.Limit)
         }
     }
     // send back the response
-    res := indexScanResponse(rows, err)
-    header := w.Header()
-    header["Content-Type"] = []string{"encoding/json"}
-    buf, _ := json.Marshal(&res)
-    w.Write(buf)
+    sendScanResponse(w, rows, err)
 }
 
 // /stats.
@@ -144,33 +208,33 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 //---- helper functions
-func scanQuery(index *api.IndexInfo, offset, limit int) (
+func scanQuery(indexinfo *api.IndexInfo, offset, limit int) (
     []api.IndexRow, error) {
 
-    if looker, ok := index.Index.(api.Looker); ok {
-        ch, cherr := looker.KVSet()
-        return receiveKV(ch, cherr, offset, limit)
+    if looker, ok := indexinfo.Index.(api.Looker); ok {
+        chkv, cherr := looker.KVSet()
+        return receiveKV(chkv, cherr, offset, limit)
     }
     err := errors.New("index does not support Looker interface")
     return nil, err
 }
 
 func rangeQuery(
-    index *api.IndexInfo, low, high api.Key, incl api.Inclusion, offset, limit int) (
-        []api.IndexRow, error) {
+    indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion, offset,
+    limit int) ( []api.IndexRow, error) {
 
-    if ranger, ok := index.Index.(api.Ranger); ok {
-        ch, cherr, _ := ranger.KVRange(low, high, incl)
-        return receiveKV(ch, cherr, offset, limit)
+    if ranger, ok := indexinfo.Index.(api.Ranger); ok {
+        chkv, cherr, _ := ranger.KVRange(low, high, incl)
+        return receiveKV(chkv, cherr, offset, limit)
     }
     err := errors.New("index does not support ranger interface")
     return nil, err
 }
 
-func lookupQuery(index *api.IndexInfo, key api.Key, offset, limit int) (
+func lookupQuery(indexinfo *api.IndexInfo, key api.Key, offset, limit int) (
     []api.IndexRow, error) {
 
-    if looker, ok := index.Index.(api.Looker); ok {
+    if looker, ok := indexinfo.Index.(api.Looker); ok {
         ch, cherr := looker.Lookup(key)
         return receiveValue(key, ch, cherr, offset, limit)
     }
@@ -178,50 +242,37 @@ func lookupQuery(index *api.IndexInfo, key api.Key, offset, limit int) (
     return nil, err
 }
 
-func handleRequest(r *http.Request) *api.IndexInfo {
-    // Get IndexInfo, without the `uuid`.
-    indexreq := api.IndexRequest{}
-    buf := make([]byte, 0, r.ContentLength)
-    r.Body.Read(buf)
-    json.Unmarshal(buf, &indexreq)
-    return &indexreq.Indexinfo
-}
-
-func indexMetaResponse(index *api.IndexInfo, err error) (
-    res api.IndexMetaResponse) {
-
-    if err == nil {
-        res = api.IndexMetaResponse{
-            Status:  api.SUCCESS, Indexes: []api.IndexInfo{*index}, Errors:  nil,
-        }
-    } else {
-        indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
-        res = api.IndexMetaResponse{
-            Status:  api.ERROR,
-            Indexes: nil,
-            Errors:  []api.IndexError{indexerr},
-        }
+func sendResponse(w http.ResponseWriter, res interface{}) {
+    var buf []byte
+    var err error
+    header := w.Header()
+    header["Content-Type"] = []string{"application/json"}
+    if buf, err = json.Marshal(&res); err != nil {
+        log.Println("Unable to marshal response", res)
     }
-    return res
+    w.Write(buf)
 }
 
-func indexScanResponse(rows []api.IndexRow, err error) (
-    res api.IndexScanResponse) {
+func sendScanResponse(w http.ResponseWriter, rows []api.IndexRow, err error) {
+    var res api.IndexScanResponse
 
     if err == nil {
         res = api.IndexScanResponse{
-            Status: api.SUCCESS, TotalRows: int64(len(rows)),
-            Rows:   rows,        Errors:    nil,
+            Status:    api.SUCCESS,
+            TotalRows: int64(len(rows)),
+            Rows:      rows,
+            Errors:    nil,
         }
     } else {
         indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
         res = api.IndexScanResponse{
-            Status: api.SUCCESS, TotalRows: int64(0),
-            Rows:   nil,
-            Errors:  []api.IndexError{indexerr},
+            Status:    api.SUCCESS,
+            TotalRows: int64(0),
+            Rows:      nil,
+            Errors:    []api.IndexError{indexerr},
         }
     }
-    return res
+    sendResponse(w, res)
 }
 
 func receiveKV(ch chan api.KV, cherr chan error, offset, limit int) (
@@ -229,8 +280,10 @@ func receiveKV(ch chan api.KV, cherr chan error, offset, limit int) (
 
     for offset > 0 {
         select {
-        case <-ch:           offset--
-        case err := <-cherr: return nil, err
+        case <-ch:
+            offset--
+        case err := <-cherr:
+            return nil, err
         }
     }
 
@@ -238,11 +291,15 @@ func receiveKV(ch chan api.KV, cherr chan error, offset, limit int) (
     for limit > 0 {
         select {
         case kv := <-ch:
-            row := api.IndexRow{Key: string(kv[0]), Value: string(kv[1])}
+            key, value := kv[0].(api.Key), kv[1].(api.Value)
+            row := api.IndexRow{
+                Key: string(key.Bytes()),
+                Value: string(value.Bytes()),
+            }
             rows = append(rows, row)
             limit--
         case err := <-cherr:
-            return nil, err
+            return rows, err
         }
     }
     return rows, nil
@@ -253,8 +310,10 @@ func receiveValue(key api.Key, ch chan api.Value, cherr chan error, offset, limi
 
     for offset > 0 {
         select {
-        case <-ch:           offset--
-        case err := <-cherr: return nil, err
+        case <-ch:
+            offset--
+        case err := <-cherr:
+            return nil, err
         }
     }
 
@@ -262,12 +321,34 @@ func receiveValue(key api.Key, ch chan api.Value, cherr chan error, offset, limi
     for limit > 0 {
         select {
         case value := <-ch:
-            row := api.IndexRow{Key: string(key), Value: string(value)}
+            row := api.IndexRow{
+                Key: string(key.Bytes()),
+                Value: string(value.Bytes()),
+            }
             rows = append(rows, row)
             limit--
         case err := <-cherr:
-            return nil, err
+            return rows, err
         }
     }
     return rows, nil
 }
+
+// Parse HTTP Request to get IndexInfo.
+func indexRequest(r *http.Request) *api.IndexRequest {
+    indexreq := api.IndexRequest{}
+    buf := make([]byte, r.ContentLength, r.ContentLength)
+    r.Body.Read(buf)
+    json.Unmarshal(buf, &indexreq)
+    return &indexreq
+}
+
+func notifyLongPolls() {
+    mutex.Lock()
+    defer mutex.Unlock()
+    for _, ch := range longPolls {
+        ch <- nil
+    }
+    longPolls = make([]chan interface{}, 0)
+}
+
