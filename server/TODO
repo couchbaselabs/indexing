@@ -1,1 +1,7 @@
-- Remove dependancy with "github.com/nu7hatch/gouuid"
+- Remove dependancy with "github.com/nu7hatch/gouuid", or bag them into
+  respective places.
+
+- Unit test cases require that the server is started before-hand. Instead
+  spawn the server, execute the test case and kill the server.
+
+- command line options for indexing/server/main/.
