@@ -38,10 +38,10 @@ type Node struct {
 type Iterator func(api.Key, api.Value) bool
 
 func less(x, y api.Key) bool {
-    if x == api.PInf {
+    switch x.(type) {
+    case api.PInf:
         return false
-    }
-    if x == api.NInf {
+    case api.NInf:
         return true
     }
     return x.Less(y)

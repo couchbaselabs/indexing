@@ -86,7 +86,7 @@ func (index *IndexLLRB) KeySet() (chan api.Key, chan error) {
             return false
         }
         go func() {
-            index.tree.AscendRange(api.NInf, api.PInf, iterfn)
+            index.tree.AscendRange(api.NegInf, api.PosInf, iterfn)
             closeChans()
         }()
     } else {
@@ -109,7 +109,7 @@ func (index *IndexLLRB) ValueSet() (chan api.Value, chan error) {
             return false
         }
         go func() {
-            index.tree.AscendRange(api.NInf, api.PInf, iterfn)
+            index.tree.AscendRange(api.NegInf, api.PosInf, iterfn)
             closeChans()
         }()
     } else {
@@ -132,7 +132,7 @@ func (index *IndexLLRB) KVSet() (chan api.KV, chan error) {
             return false
         }
         go func() {
-            index.tree.AscendRange(api.NInf, api.PInf, iterfn)
+            index.tree.AscendRange(api.NegInf, api.PosInf, iterfn)
             closeChans()
         }()
     } else {
