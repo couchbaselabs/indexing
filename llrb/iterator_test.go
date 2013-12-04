@@ -13,7 +13,7 @@ func TestAscendGreaterOrEqual(t *testing.T) {
     tree.Add(api.Int(1), api.String("how"))
     tree.Add(api.Int(3), api.String("are you"))
     var ary []api.Int
-    tree.AscendGreaterOrEqual(api.NInf, func(key api.Key, _ api.Value) bool {
+    tree.AscendGreaterOrEqual(api.NegInf, func(key api.Key, _ api.Value) bool {
         ary = append(ary, key.(api.Int))
         return true
     })
