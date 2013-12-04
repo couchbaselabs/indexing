@@ -121,8 +121,9 @@ type IndexManager interface {
 }
 
 type Key interface {
-    Bytes() []byte      // content of key as byte representation
-    Less(than Key) bool // compare whether `this` key is less than `than` key
+    Bytes() []byte        // content of key as byte representation
+    Less(than Key) bool   // compare whether `this` key is less than `than` key
+    Compare(than Key) Ord // compare whether `this` key is less than `than` key
 }
 
 type Value interface{
