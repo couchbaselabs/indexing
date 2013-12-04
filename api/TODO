@@ -1,4 +1,4 @@
-Manik's concern on the too much of data exchange between query and indexing.
+* Manik's concern on the too much of data exchange between query and indexing.
 
   manik: " it seems to me that a lot of data can be potentially exchanged
   between the indexer nodes and the query engine. This is due to the fact that
@@ -17,3 +17,5 @@ Manik's concern on the too much of data exchange between query and indexing.
   We are definitely treading new ground here. Keeping index, storage and
   query separate is new to me. So I really want a prototype to benchmark to
   figure out the bottlenecks. "
+
+* Find a single operation comparision for Int64 in keys.go
