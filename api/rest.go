@@ -1,18 +1,20 @@
 // REST API to access indexing.
 
-// TODO: Add STATS command.
+// TODO: Implement STATS command.
+// TODO: Change the server implementation URL to follow REST philosphy.
 
 package api
 
 type RequestType int
 const (
-    CREATE RequestType = iota   // /create
-    DROP                        // /drop
-    LIST                        // /list
-    SCAN                        // /scan
-    STATS                       // /stats
-    NODES                       // /nodes
-    NOTIFY                      // /notify
+    CREATE RequestType = iota // POST /indexes/create
+    DROP                      // DELETE /indexes/uuid
+    LIST                      // GET /indexes/list
+    SCAN                      // GET /indexes/uuid/scan
+    STATS                     // GET /indexes/stats
+                              // GET /indexes/uuid/stats
+    NODES                     // GET /indexes/nodes
+    NOTIFY                    // GET /indexes/notify
 )
 
 // URL encoded query params
