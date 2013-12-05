@@ -107,7 +107,7 @@ func (cache *DCache) cache(fpos int64, node Node) bool {
 func (cache *DCache) cacheLookup(fpos int64) Node {
     idx := cache.indexFor(fpos)
     hash := (*[]unsafe.Pointer)(atomic.LoadPointer(&(cache.hash)))
-    head := (*DCacheItem)(atomic.LoadPointer(&((*hash)[idx]))
+    head := (*DCacheItem)(atomic.LoadPointer(&((*hash)[idx])))
     for head != nil {
         if head.fpos == fpos {
             return head.node
