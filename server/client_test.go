@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"github.com/couchbaselabs/indexing/api"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -12,11 +13,10 @@ func TestRestClient(t *testing.T) {
 	indexinfo := api.IndexInfo{
 		Name:       "test",
 		Using:      api.Llrb,
-		CreateStmt: `CREATE INDEX emailidx ON users (age+10)`,
+		OnExprList: []string{`{"type":"property","path":"age"}`},
 		Bucket:     "users",
 		IsPrimary:  false,
 		Exprtype:   "simple",
-		Expression: "",
 	}
 	servUuid := ""
 
@@ -54,14 +54,14 @@ func TestRestClient(t *testing.T) {
 	// Index()
 	if indexinfo_, err := client.Index(indexinfo.Uuid); err != nil {
 		t.Error("Index() call failed", err)
-	} else if indexinfo_.CreateStmt != indexinfo.CreateStmt {
-		t.Error("create statement returned by Index() call does not match")
+	} else if !reflect.DeepEqual(indexinfo_.OnExprList, indexinfo.OnExprList) {
+		t.Error("OnExprList returned by Index() call does not match")
 	}
 
 	// Nodes()
 	if nodes, err := client.Nodes(); err != nil {
 		t.Error("Nodes() failed", err)
-	} else if nodes[0] != "localhost:8094" {
+	} else if node := nodes[0]; node.IndexerURL != "localhost:8094" {
 		t.Error("nodes does not match", nodes)
 	}
 
@@ -69,7 +69,7 @@ func TestRestClient(t *testing.T) {
 	if servUuid_, err := client.Drop(indexinfo.Uuid); err != nil {
 		t.Error("Unable to drop index", indexinfo.Name, err)
 	} else if servUuid == servUuid_ {
-		t.Error("Expected a different server unique id after a dropt")
+		t.Error("Expected a different server unique id after a drop")
 	} else {
 		servUuid = servUuid_
 	}
@@ -91,11 +91,10 @@ func TestNotify(t *testing.T) {
 	indexinfo := api.IndexInfo{
 		Name:       "test",
 		Using:      api.Llrb,
-		CreateStmt: `CREATE INDEX emailidx ON users (age+10)`,
+		OnExprList: []string{`{"type":"property","path":"age"}`},
 		Bucket:     "users",
 		IsPrimary:  false,
 		Exprtype:   "simple",
-		Expression: "",
 	}
 	servUuid := ""
 
@@ -107,24 +106,53 @@ func TestNotify(t *testing.T) {
 	}
 
 	// Notify()
-	errch := client.Notify(servUuid)
+	respch := startNotificationReceiver(t, client, servUuid)
+	time.Sleep(time.Millisecond * 1000)
 
 	// Create()
 	if servUuid, indexinfo, err = client.Create(indexinfo); err != nil {
 		t.Error("Unable to create index", indexinfo.Name, err)
 	}
-	if err = waitNotification(errch); err != nil {
-		t.Error(err)
+
+	if notifyServerUuid, errNotify := waitNotifyResponseOrTimeout(respch); errNotify != nil {
+		t.Error(errNotify)
+	} else if notifyServerUuid != servUuid {
+		t.Error("Notify returned serverUuid doesn't match expected Uuid")
 	}
 
-	errch = client.Notify(servUuid)
-	if err = waitNotification(errch); err == nil {
+	respch = startNotificationReceiver(t, client, servUuid)
+	if _, err = waitNotifyResponseOrTimeout(respch); err == nil {
 		t.Error("Expecting timeout err")
 	}
+
 }
 
-func waitNotification(errch chan error) (err error) {
-	// Wait for notification
+func handleNotification(t *testing.T, client *RestClient, cacheServUuid string,
+	respch chan string) {
+
+	status, serverUuid, err := client.Notify(cacheServUuid)
+	if err != nil {
+		t.Error("Error in notification", err)
+	}
+	if status != api.INVALID_CACHE {
+		t.Error("Invalid notification message", status)
+	}
+	if serverUuid == cacheServUuid {
+		t.Error("Received Same ServerUUID in notification as sent in request. Invalid.")
+	}
+	respch <- serverUuid
+}
+
+func startNotificationReceiver(t *testing.T, client *RestClient,
+	cacheServUuid string) chan string {
+
+	respch := make(chan string, 1)
+	go handleNotification(t, client, cacheServUuid, respch)
+	return respch
+
+}
+
+func waitNotifyResponseOrTimeout(respch chan string) (string, error) {
 	timeoutch := make(chan bool, 1)
 	go func() {
 		time.Sleep(1 * time.Second)
@@ -132,9 +160,9 @@ func waitNotification(errch chan error) (err error) {
 	}()
 
 	select {
-	case err = <-errch:
-		return err
+	case serverUuid := <-respch:
+		return serverUuid, nil
 	case <-timeoutch:
-		return errors.New("Timeout: did not receive notification")
+		return "", errors.New("Timeout: did not receive notification")
 	}
 }
