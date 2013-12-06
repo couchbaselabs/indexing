@@ -32,7 +32,7 @@ type QueryParams struct {
 // they can choose the access the underlying interfaces directly.
 type IndexRequest struct {
     Type       RequestType
-    Indexinfo  IndexInfo
+    Index      IndexInfo
     ServerUuid string
     Params     QueryParams
 }
