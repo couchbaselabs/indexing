@@ -70,3 +70,8 @@ type IndexScanResponse struct {
 	Rows      []IndexRow
 	Errors    []IndexError
 }
+
+//Indexer Node Info
+type NodeInfo struct {
+	IndexerURL string
+}

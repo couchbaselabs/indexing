@@ -58,11 +58,10 @@ type IndexInfo struct {
 	Name       string    // Name of the index
 	Uuid       string    // unique id for every new index created.
 	Using      IndexType // indexing algorithm to use / used.
-	CreateStmt string    // in case the index was created by N1QL DDL
+	OnExprList []string  // expression list
 	Bucket     string    // bucket name, for which the index is created.
 	IsPrimary  bool      // true/false based on index
 	Exprtype   ExprType  // type of `Expression`
-	Expression string    // expression content, check out ExprType
 	Index      Finder    // instance of index algorithm.
 }
 
