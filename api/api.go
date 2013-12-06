@@ -8,6 +8,7 @@ package api
 
 // Known index types
 type IndexType string
+
 const (
     View    IndexType = "view"
     Llrb              = "llrb"
@@ -20,6 +21,7 @@ const (
 
 // Inclusion, controls how the boundaries values of a range are treated
 type Inclusion string
+
 const (
     Neither Inclusion = "none"
     Left              = "left"
@@ -29,6 +31,7 @@ const (
 
 // Uniqueness, characterizes if the algorithm demands unique keys
 type Uniqueness bool
+
 const (
     Unique    Uniqueness = true
     NonUnique            = false
@@ -36,6 +39,7 @@ const (
 
 // SortOrder characterizes if the algorithm emits keys in a predictable order
 type SortOrder string
+
 const (
     Unsorted SortOrder = "none"
     Asc                = "asc"
@@ -44,6 +48,7 @@ const (
 
 // Expression to be applied on the document to get the secondary key.
 type ExprType string
+
 const (
     Simple     string = "simple"
     JavaScript        = "javascript"
@@ -56,16 +61,18 @@ type IndexInfo struct {
     Name       string    // Name of the index
     Uuid       string    // unique id for every new index created.
     Using      IndexType // indexing algorithm to use / used.
-    OnExprList []string  // expression list
+    CreateStmt string    // in case the index was created by N1QL DDL
     Bucket     string    // bucket name, for which the index is created.
     IsPrimary  bool      // true/false based on index
     Exprtype   ExprType  // type of `Expression`
-    Engine     Finder    // instance of index algorithm.
+    Expression string    // expression content, check out ExprType
+    Index      Finder    // instance of index algorithm.
 }
 
 // Accuracy characterizes if the results of the index is subject to probabilistic errors.
 // When an algorithm that is not Perfect is used, the caller must verify the results.
 type Accuracy float64
+
 const (
     Useless Accuracy = 0.0
     Perfect          = 1.0
@@ -73,8 +80,9 @@ const (
 
 // Complexity characterizes space and time characteristics of the algorithm
 type Complexity int
+
 const (
-    O1     Complexity = iota
+    O1 Complexity = iota
     Ologm
     Ologn
     Om
@@ -120,19 +128,6 @@ type IndexManager interface {
 
     // Get Uuid
     GetUuid() string
-
-    //Check if index already exists for a given bucket
-    Exists(name string, bucket string) error
-}
-
-type Key interface {
-    Bytes() []byte        // content of key as byte representation
-    Less(than Key) bool   // compare whether `this` key is less than `than` key
-    Compare(than Key) Ord // compare whether `this` key is less than `than` key
-}
-
-type Value interface {
-=======
 }
 
 type Key interface {
@@ -142,7 +137,6 @@ type Key interface {
 }
 
 type Value interface{
->>>>>>> Another iteration on indexing apis.
     Bytes() []byte // content of value, typically document-id
 }
 
