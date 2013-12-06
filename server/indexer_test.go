@@ -5,6 +5,7 @@ import (
 	"github.com/couchbaselabs/indexing/llrb"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -63,11 +64,10 @@ func TestCatalog(t *testing.T) {
 	indexinfo = api.IndexInfo{
 		Name:       "test",
 		Using:      api.Llrb,
-		CreateStmt: `CREATE INDEX emailidx ON users (age+10)`,
+		OnExprList: []string{`{"type":"property","path":"age"}`},
 		Bucket:     "users",
 		IsPrimary:  false,
 		Exprtype:   "simple",
-		Expression: "",
 	}
 
 	// Test Create()
@@ -111,8 +111,8 @@ func TestCatalog(t *testing.T) {
 		if len(ls) != 1 {
 			t.Error("List returns", len(ls))
 		}
-		if ls[0].CreateStmt != indexinfo.CreateStmt {
-			t.Error("List returns create statement", ls[0].CreateStmt)
+		if !reflect.DeepEqual(ls[0].OnExprList, indexinfo.OnExprList) {
+			t.Error("List returns create statement", ls[0].OnExprList)
 		}
 	}
 
