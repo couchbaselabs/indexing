@@ -18,7 +18,7 @@ import (
 )
 
 var indexer api.IndexManager
-var longPolls = make([]chan interface{}, 0)
+var longPolls = make([]chan string, 0)
 var mutex sync.Mutex
 
 func main() {
@@ -50,11 +50,10 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	var servUuid string
 	var err error
 
-	indexinfo := indexRequest(r).Indexinfo // Get IndexInfo, without the `uuid`
+	indexinfo := indexRequest(r).Index // Get IndexInfo, without the `uuid`
 	// Normalize IndexInfo
 	if indexinfo.Exprtype == "" {
 		indexinfo.Exprtype = api.N1QL
-		indexinfo.Expression = indexinfo.CreateStmt
 	}
 
 	if servUuid, indexinfo, err = indexer.Create(indexinfo); err == nil {
@@ -64,8 +63,8 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 			Indexes:    []api.IndexInfo{indexinfo},
 			ServerUuid: servUuid,
 		}
-		notifyLongPolls()
-		log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.CreateStmt)
+		notifyLongPolls(servUuid)
+		log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.OnExprList)
 	} else {
 		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
 		res = api.IndexMetaResponse{
@@ -81,13 +80,13 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 func handleDrop(w http.ResponseWriter, r *http.Request) {
 	var res api.IndexMetaResponse
 
-	indexinfo := indexRequest(r).Indexinfo
+	indexinfo := indexRequest(r).Index
 	if servUuid, err := indexer.Drop(indexinfo.Uuid); err == nil {
 		res = api.IndexMetaResponse{
 			Status:     api.SUCCESS,
 			ServerUuid: servUuid,
 		}
-		notifyLongPolls()
+		notifyLongPolls(servUuid)
 		log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 	} else {
 		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
@@ -125,8 +124,8 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 
 // /nodes
 func handleNodes(w http.ResponseWriter, r *http.Request) {
-	nodes := []string{"localhost:8094"}
-	res := api.IndexMetaResponse{Status: api.SUCCESS, Nodes: nodes, Errors: nil}
+	node := api.NodeInfo{IndexerURL: "localhost:8094"}
+	res := api.IndexMetaResponse{Status: api.SUCCESS, Nodes: []api.NodeInfo{node}, Errors: nil}
 	sendResponse(w, res)
 	log.Printf("Nodes")
 }
@@ -134,19 +133,29 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 // /notify
 func handleNotify(w http.ResponseWriter, r *http.Request) {
 	var res api.IndexMetaResponse
+	var newServerUuid string
 
+	//FIXME Use indexer.GetUuid instead of List?
 	if servUuid, _, err := indexer.List(""); err == nil {
 		req := indexRequest(r)
+
+		log.Printf("Received Notify Request with ServerUuid %s", req.ServerUuid)
 		if req.ServerUuid == servUuid {
-			ch := make(chan interface{}, 1)
+			ch := make(chan string, 1)
 			mutex.Lock()
 			longPolls = append(longPolls, ch)
 			mutex.Unlock()
-			<-ch
+			select {
+			case newServerUuid = <-ch:
+				log.Printf("Sending Notification to Client")
+			case <-w.(http.CloseNotifier).CloseNotify():
+				log.Printf("Connection Closed by Client. Notify thread closing.")
+				return
+			}
 		}
 		res = api.IndexMetaResponse{
 			Status:     api.INVALID_CACHE,
-			ServerUuid: servUuid,
+			ServerUuid: newServerUuid,
 		}
 	} else {
 		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
@@ -155,14 +164,16 @@ func handleNotify(w http.ResponseWriter, r *http.Request) {
 			Errors: []api.IndexError{indexerr},
 		}
 	}
+	log.Printf("Exited Notify Request")
 	sendResponse(w, res)
+
 }
 
 // /scan
 func handleScan(w http.ResponseWriter, r *http.Request) {
 	var err error
 
-	indexinfo := indexRequest(r).Indexinfo // Gather request
+	indexinfo := indexRequest(r).Index // Gather request
 
 	// Gather and normalizequery parameters
 	r.ParseForm()
@@ -247,6 +258,7 @@ func sendResponse(w http.ResponseWriter, res interface{}) {
 	var err error
 	header := w.Header()
 	header["Content-Type"] = []string{"application/json"}
+
 	if buf, err = json.Marshal(&res); err != nil {
 		log.Println("Unable to marshal response", res)
 	}
@@ -343,11 +355,11 @@ func indexRequest(r *http.Request) *api.IndexRequest {
 	return &indexreq
 }
 
-func notifyLongPolls() {
+func notifyLongPolls(serverUuid string) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	for _, ch := range longPolls {
-		ch <- nil
+		ch <- serverUuid
 	}
-	longPolls = make([]chan interface{}, 0)
+	longPolls = make([]chan string, 0)
 }
