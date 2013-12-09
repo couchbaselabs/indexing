@@ -60,7 +60,7 @@ type IndexMetaResponse struct {
 	Status     ResponseStatus
 	Indexes    []IndexInfo
 	ServerUuid string
-	Nodes      []string
+	Nodes      []NodeInfo
 	Errors     []IndexError
 }
 
