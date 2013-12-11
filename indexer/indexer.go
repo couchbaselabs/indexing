@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
-	"github.com/couchbaselabs/indexing/llrb"
+	"github.com/couchbaselabs/indexing/engine/llrb"
 	"log"
 	"net/http"
 	"strconv"
