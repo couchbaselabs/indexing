@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+//FIXME Change from t.Error to t.Errorf
 func TestRestClient(t *testing.T) {
 	client := NewRestClient("http://localhost:8094")
 	indexinfo := api.IndexInfo{
@@ -26,6 +27,11 @@ func TestRestClient(t *testing.T) {
 	} else {
 		servUuid, indexinfo = servUuid_, indexinfo_
 	}
+
+	// Create Duplicate
+	if _, _, err := client.Create(indexinfo); err == nil {
+		t.Error("Duplicate Index Created", indexinfo.Name)
+	} 
 
 	// List("")
 	if servUuid_, indexinfos, err := client.List(""); err != nil {
@@ -61,7 +67,7 @@ func TestRestClient(t *testing.T) {
 	// Nodes()
 	if nodes, err := client.Nodes(); err != nil {
 		t.Error("Nodes() failed", err)
-	} else if node := nodes[0]; node.IndexerURL != "localhost:8094" {
+	} else if node := nodes[0]; node.IndexerURL != "http://localhost:8095" {
 		t.Error("nodes does not match", nodes)
 	}
 

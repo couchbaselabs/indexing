@@ -1,5 +1,5 @@
 // A rest client to be used with server.
-package server
+package main
 
 import (
 	"bytes"
@@ -46,9 +46,11 @@ func (client *RestClient) Create(indexinfo IndexInfo) (
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err = client.httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			mresp, err = metaResponse(resp)
-			//FIXME: Do we need to check for err here and return conditionally
-			serverUuid, indexinfo = mresp.ServerUuid, mresp.Indexes[0]
+			if mresp, err = metaResponse(resp); err == nil {
+				serverUuid, indexinfo = mresp.ServerUuid, mresp.Indexes[0]
+			} else {
+				return "", indexinfo, err
+			}
 		}
 	}
 	return serverUuid, indexinfo, err
@@ -72,9 +74,11 @@ func (client *RestClient) Drop(uuid string) (string, error) {
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err := client.httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			mresp, err = metaResponse(resp)
-			//FIXME: Do we need to check for err here and return conditionally
-			serverUuid = mresp.ServerUuid
+			if mresp, err = metaResponse(resp); err == nil {
+				serverUuid = mresp.ServerUuid
+			} else {
+				return "", err
+			}
 		}
 	}
 	return serverUuid, err

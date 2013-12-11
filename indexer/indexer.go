@@ -6,39 +6,41 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"github.com/couchbaselabs/indexing/api"
-	"github.com/couchbaselabs/indexing/server"
+	"github.com/couchbaselabs/indexing/catalog"
+	"github.com/couchbaselabs/indexing/llrb"
 	"log"
 	"net/http"
-	"strconv"
 	"sync"
+	"errors"
+	"fmt"
+	"strconv"
+	"bytes"
 )
 
-var indexer api.IndexManager
-var longPolls = make([]chan string, 0)
-var mutex sync.Mutex
+var c api.IndexCatalog
+var ddlLock sync.Mutex
+
+const (
+	DEFAULT_LIMIT int = 100
+)
 
 func main() {
 	var err error
 
-	// Create indexer catalog
-	if indexer, err = server.NewIndexCatalog("./"); err != nil {
+	// Create index catalog
+	if c, err = catalog.NewIndexCatalog("./"); err != nil {
 		panic(err)
 	}
 
-	addr := ":8094"
+	addr := ":8095"
 	// Subscribe to HTTP server handlers
 	http.HandleFunc("/create", handleCreate)
 	http.HandleFunc("/drop", handleDrop)
-	http.HandleFunc("/list", handleList)
 	http.HandleFunc("/scan", handleScan)
-	http.HandleFunc("/nodes", handleNodes)
-	http.HandleFunc("/notify", handleNotify)
 	http.HandleFunc("/stats", handleStats)
-	log.Println("Listening on", addr)
+	log.Println("Indexer Listening on", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Println("Fatal:", err)
 	}
@@ -47,30 +49,23 @@ func main() {
 // /create
 func handleCreate(w http.ResponseWriter, r *http.Request) {
 	var res api.IndexMetaResponse
-	var servUuid string
 	var err error
 
-	indexinfo := indexRequest(r).Index // Get IndexInfo, without the `uuid`
-	// Normalize IndexInfo
-	if indexinfo.Exprtype == "" {
-		indexinfo.Exprtype = api.N1QL
-	}
+	indexinfo := indexRequest(r).Index // Get IndexInfo
 
-	if servUuid, indexinfo, err = indexer.Create(indexinfo); err == nil {
-		indexinfo.Index = nil
-		res = api.IndexMetaResponse{
-			Status:     api.SUCCESS,
-			Indexes:    []api.IndexInfo{indexinfo},
-			ServerUuid: servUuid,
+	ddlLock.Lock()
+	defer ddlLock.Unlock()
+	
+	if _, err = c.Create(indexinfo); err == nil {
+		if err = getIndexEngine(&indexinfo); err == nil {
+			res = api.IndexMetaResponse{
+				Status:     api.SUCCESS,
+			}
+			log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 		}
-		notifyLongPolls(servUuid)
-		log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.OnExprList)
-	} else {
-		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
-		res = api.IndexMetaResponse{
-			Status: api.ERROR,
-			Errors: []api.IndexError{indexerr},
-		}
+	} 
+	if  err != nil {
+		res = createMetaResponseFromError(err)	
 		log.Println("ERROR: Failed to create index", err)
 	}
 	sendResponse(w, res)
@@ -81,92 +76,20 @@ func handleDrop(w http.ResponseWriter, r *http.Request) {
 	var res api.IndexMetaResponse
 
 	indexinfo := indexRequest(r).Index
-	if servUuid, err := indexer.Drop(indexinfo.Uuid); err == nil {
+
+	ddlLock.Lock()
+	defer ddlLock.Unlock()
+
+	if _, err := c.Drop(indexinfo.Uuid); err == nil {
 		res = api.IndexMetaResponse{
 			Status:     api.SUCCESS,
-			ServerUuid: servUuid,
 		}
-		notifyLongPolls(servUuid)
 		log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 	} else {
-		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
-		res = api.IndexMetaResponse{
-			Status: api.ERROR,
-			Errors: []api.IndexError{indexerr},
-		}
+		res = createMetaResponseFromError(err)	
 		log.Println("ERROR: Failed to drop index", err)
 	}
 	sendResponse(w, res)
-}
-
-// /list
-func handleList(w http.ResponseWriter, r *http.Request) {
-	var res api.IndexMetaResponse
-
-	serverUuid := indexRequest(r).ServerUuid
-	if servUuid, indexes, err := indexer.List(serverUuid); err == nil {
-		res = api.IndexMetaResponse{
-			Status:     api.SUCCESS,
-			Indexes:    indexes,
-			ServerUuid: servUuid,
-		}
-		log.Printf("List server %v", indexer.GetUuid())
-	} else {
-		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
-		res = api.IndexMetaResponse{
-			Status: api.ERROR,
-			Errors: []api.IndexError{indexerr},
-		}
-		log.Println("ERROR: Listing server", err)
-	}
-	sendResponse(w, res)
-}
-
-// /nodes
-func handleNodes(w http.ResponseWriter, r *http.Request) {
-	node := api.NodeInfo{IndexerURL: "localhost:8094"}
-	res := api.IndexMetaResponse{Status: api.SUCCESS, Nodes: []api.NodeInfo{node}, Errors: nil}
-	sendResponse(w, res)
-	log.Printf("Nodes")
-}
-
-// /notify
-func handleNotify(w http.ResponseWriter, r *http.Request) {
-	var res api.IndexMetaResponse
-	var newServerUuid string
-
-	//FIXME Use indexer.GetUuid instead of List?
-	if servUuid, _, err := indexer.List(""); err == nil {
-		req := indexRequest(r)
-
-		log.Printf("Received Notify Request with ServerUuid %s", req.ServerUuid)
-		if req.ServerUuid == servUuid {
-			ch := make(chan string, 1)
-			mutex.Lock()
-			longPolls = append(longPolls, ch)
-			mutex.Unlock()
-			select {
-			case newServerUuid = <-ch:
-				log.Printf("Sending Notification to Client")
-			case <-w.(http.CloseNotifier).CloseNotify():
-				log.Printf("Connection Closed by Client. Notify thread closing.")
-				return
-			}
-		}
-		res = api.IndexMetaResponse{
-			Status:     api.INVALID_CACHE,
-			ServerUuid: newServerUuid,
-		}
-	} else {
-		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
-		res = api.IndexMetaResponse{
-			Status: api.ERROR,
-			Errors: []api.IndexError{indexerr},
-		}
-	}
-	log.Printf("Exited Notify Request")
-	sendResponse(w, res)
-
 }
 
 // /scan
@@ -182,22 +105,24 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		High:      api.Key(api.String(r.Form["High"][0])),
 		Inclusion: api.Inclusion(r.Form["Inclusion"][0]),
 	}
+
 	offset := r.Form["Offset"][0]
 	if offset == "" {
 		q.Offset = 0
 	} else {
 		q.Offset, _ = strconv.Atoi(offset)
 	}
+
 	limit := r.Form["Limit"][0]
 	if limit == "" {
-		q.Limit = server.DEFAULT_LIMIT
+		q.Limit = DEFAULT_LIMIT
 	} else {
 		q.Limit, _ = strconv.Atoi(limit)
 	}
 
 	// Scan
 	rows := make([]api.IndexRow, 0)
-	if indexinfo, err = indexer.Index(indexinfo.Uuid); err == nil {
+	if indexinfo, err = c.Index(indexinfo.Uuid); err == nil {
 		if q.Low == nil && q.High == nil {
 			rows, err = scanQuery(
 				&indexinfo, q.Offset, q.Limit)
@@ -222,7 +147,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 func scanQuery(indexinfo *api.IndexInfo, offset, limit int) (
 	[]api.IndexRow, error) {
 
-	if looker, ok := indexinfo.Index.(api.Looker); ok {
+	if looker, ok := indexinfo.Engine.(api.Looker); ok {
 		chkv, cherr := looker.KVSet()
 		return receiveKV(chkv, cherr, offset, limit)
 	}
@@ -234,7 +159,7 @@ func rangeQuery(
 	indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion, offset,
 	limit int) ([]api.IndexRow, error) {
 
-	if ranger, ok := indexinfo.Index.(api.Ranger); ok {
+	if ranger, ok := indexinfo.Engine.(api.Ranger); ok {
 		chkv, cherr, _ := ranger.KVRange(low, high, incl)
 		return receiveKV(chkv, cherr, offset, limit)
 	}
@@ -245,7 +170,7 @@ func rangeQuery(
 func lookupQuery(indexinfo *api.IndexInfo, key api.Key, offset, limit int) (
 	[]api.IndexRow, error) {
 
-	if looker, ok := indexinfo.Index.(api.Looker); ok {
+	if looker, ok := indexinfo.Engine.(api.Looker); ok {
 		ch, cherr := looker.Lookup(key)
 		return receiveValue(key, ch, cherr, offset, limit)
 	}
@@ -355,11 +280,25 @@ func indexRequest(r *http.Request) *api.IndexRequest {
 	return &indexreq
 }
 
-func notifyLongPolls(serverUuid string) {
-	mutex.Lock()
-	defer mutex.Unlock()
-	for _, ch := range longPolls {
-		ch <- serverUuid
-	}
-	longPolls = make([]chan string, 0)
+func createMetaResponseFromError(err error) api.IndexMetaResponse {
+
+	indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
+	res := api.IndexMetaResponse{
+			Status: api.ERROR,
+			Errors: []api.IndexError{indexerr},
+		}
+	return res
+}
+
+// Instantiate index engine
+func getIndexEngine(index *api.IndexInfo) error {
+	var err error
+    index.Engine = nil
+        switch index.Using {
+        case api.Llrb:
+                index.Engine = llrb.NewIndexEngine(index.Name)
+        default:
+                err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", index.Using))
+        }
+        return err
 }
