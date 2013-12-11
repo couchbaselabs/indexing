@@ -7,18 +7,19 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
+	"github.com/nu7hatch/gouuid" // TODO: Remove this dependancy ??
 	"log"
 	"net/http"
 	"sync"
-	"fmt"
-	"github.com/nu7hatch/gouuid" // TODO: Remove this dependancy ??
 )
 
 var c api.IndexCatalog
 var longPolls = make([]chan string, 0)
 var mutex sync.Mutex
+
 //FIXME Get Node info from command line
 var node = api.NodeInfo{IndexerURL: "http://localhost:8095"}
 var ddlLock sync.Mutex
@@ -53,20 +54,19 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	//only one DDL (Create/Drop) can run concurrently
 	ddlLock.Lock()
 	defer ddlLock.Unlock()
-	
+
 	indexinfo := indexRequest(r).Index // Get IndexInfo, without the `uuid`
 	// Normalize IndexInfo
 	if indexinfo.Exprtype == "" {
 		indexinfo.Exprtype = api.N1QL
 	}
 
-	
 	if uvalue, err := uuid.NewV4(); err == nil {
 		indexinfo.Uuid = fmt.Sprintf("%v", uvalue)
 	} else {
 		log.Fatalln("Unable to generate UUID for index")
 	}
-	
+
 	if err = c.Exists(indexinfo.Name, indexinfo.Bucket); err == nil {
 		if err = sendCreateToIndexer(indexinfo); err == nil {
 			if servUuid, err = c.Create(indexinfo); err == nil {
@@ -76,10 +76,10 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 					ServerUuid: servUuid,
 				}
 				notifyLongPolls(servUuid)
-				log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.OnExprList)	
-			} 
-		} 
-	}		
+				log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.OnExprList)
+			}
+		}
+	}
 	if err != nil {
 		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to create index", err)
@@ -107,8 +107,8 @@ func handleDrop(w http.ResponseWriter, r *http.Request) {
 			notifyLongPolls(servUuid)
 			log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 		}
-	} 
-	
+	}
+
 	if err != nil {
 		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to drop index", err)
@@ -129,7 +129,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("List server %v", c.GetUuid())
 	} else {
-		res = createMetaResponseFromError(err)		
+		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Listing server", err)
 	}
 	sendResponse(w, res)
@@ -211,8 +211,8 @@ func createMetaResponseFromError(err error) api.IndexMetaResponse {
 
 	indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
 	res := api.IndexMetaResponse{
-			Status: api.ERROR,
-			Errors: []api.IndexError{indexerr},
-		}
+		Status: api.ERROR,
+		Errors: []api.IndexError{indexerr},
+	}
 	return res
 }

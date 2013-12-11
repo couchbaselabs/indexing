@@ -14,8 +14,8 @@ func TestTrycreate(t *testing.T) {
 	os.Remove(filepath.Join(datadir, CATALOGFILE))
 
 	c := &catalog{
-		datadir:      datadir,
-		file:         filepath.Join(datadir, CATALOGFILE),
+		datadir: datadir,
+		file:    filepath.Join(datadir, CATALOGFILE),
 	}
 	if err := c.tryCreate(); err != nil {
 		t.Error("tryCreate failed:", err)
@@ -79,7 +79,7 @@ func TestCatalog(t *testing.T) {
 	} else if len(c.indexes) != 1 {
 		t.Error("Indexes must have one index")
 	}
-	
+
 	if err = c.Exists(indexinfo.Name, indexinfo.Bucket); err == nil {
 		t.Error("Duplicate Index should not be allowed")
 	}
@@ -91,7 +91,7 @@ func TestCatalog(t *testing.T) {
 	} else if !reflect.DeepEqual(c.indexes, c_.indexes) {
 		t.Error("Cannot load back the index")
 	} else {
-			c = c_
+		c = c_
 	}
 
 	// Test Index()

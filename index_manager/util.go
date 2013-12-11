@@ -1,11 +1,11 @@
 package main
 
 import (
-	"net/http"
-	. "github.com/couchbaselabs/indexing/api"
-	"log"
 	"bytes"
 	"encoding/json"
+	. "github.com/couchbaselabs/indexing/api"
+	"log"
+	"net/http"
 )
 
 var httpc = http.DefaultClient
@@ -30,7 +30,7 @@ func sendCreateToIndexer(indexinfo IndexInfo) error {
 	}
 	return err
 
-} 
+}
 
 func sendDropToIndexer(uuid string) error {
 
@@ -52,7 +52,3 @@ func sendDropToIndexer(uuid string) error {
 	}
 	return err
 }
-
-
-
-

@@ -28,21 +28,21 @@ import (
 )
 
 const (
-	CATALOGFILE   string = "index_catalog.dat" // contains gob data
+	CATALOGFILE string = "index_catalog.dat" // contains gob data
 )
 
 type catalog struct {
 	sync.RWMutex
-	uuid         string
-	datadir      string
-	file         string
-	indexes      map[string]*api.IndexInfo
+	uuid    string
+	datadir string
+	file    string
+	indexes map[string]*api.IndexInfo
 }
 
 func NewIndexCatalog(datadir string) (c *catalog, err error) {
 	c = &catalog{
-		datadir:      datadir,
-		file:         filepath.Join(datadir, CATALOGFILE),
+		datadir: datadir,
+		file:    filepath.Join(datadir, CATALOGFILE),
 	}
 	if err = c.tryCreate(); err != nil {
 		return nil, err
@@ -140,12 +140,12 @@ func (c *catalog) Index(uuid string) (api.IndexInfo, error) {
 func (c *catalog) Exists(name string, bucket string) error {
 
 	for _, indexinfo := range c.indexes {
-	
+
 		if name == indexinfo.Name && bucket == indexinfo.Bucket {
 			return errors.New(fmt.Sprintf("Index %s already exists with UUID %s", name, indexinfo.Uuid))
 		}
 	}
-	
+
 	return nil
 
 }

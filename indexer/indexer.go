@@ -6,17 +6,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
 	"github.com/couchbaselabs/indexing/llrb"
 	"log"
 	"net/http"
-	"sync"
-	"errors"
-	"fmt"
 	"strconv"
-	"bytes"
+	"sync"
 )
 
 var c api.IndexCatalog
@@ -55,17 +55,17 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	ddlLock.Lock()
 	defer ddlLock.Unlock()
-	
+
 	if _, err = c.Create(indexinfo); err == nil {
 		if err = getIndexEngine(&indexinfo); err == nil {
 			res = api.IndexMetaResponse{
-				Status:     api.SUCCESS,
+				Status: api.SUCCESS,
 			}
 			log.Printf("Created index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 		}
-	} 
-	if  err != nil {
-		res = createMetaResponseFromError(err)	
+	}
+	if err != nil {
+		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to create index", err)
 	}
 	sendResponse(w, res)
@@ -82,11 +82,11 @@ func handleDrop(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := c.Drop(indexinfo.Uuid); err == nil {
 		res = api.IndexMetaResponse{
-			Status:     api.SUCCESS,
+			Status: api.SUCCESS,
 		}
 		log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 	} else {
-		res = createMetaResponseFromError(err)	
+		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to drop index", err)
 	}
 	sendResponse(w, res)
@@ -284,21 +284,21 @@ func createMetaResponseFromError(err error) api.IndexMetaResponse {
 
 	indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
 	res := api.IndexMetaResponse{
-			Status: api.ERROR,
-			Errors: []api.IndexError{indexerr},
-		}
+		Status: api.ERROR,
+		Errors: []api.IndexError{indexerr},
+	}
 	return res
 }
 
 // Instantiate index engine
 func getIndexEngine(index *api.IndexInfo) error {
 	var err error
-    index.Engine = nil
-        switch index.Using {
-        case api.Llrb:
-                index.Engine = llrb.NewIndexEngine(index.Name)
-        default:
-                err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", index.Using))
-        }
-        return err
+	index.Engine = nil
+	switch index.Using {
+	case api.Llrb:
+		index.Engine = llrb.NewIndexEngine(index.Name)
+	default:
+		err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", index.Using))
+	}
+	return err
 }

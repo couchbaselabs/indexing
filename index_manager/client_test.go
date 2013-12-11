@@ -31,7 +31,7 @@ func TestRestClient(t *testing.T) {
 	// Create Duplicate
 	if _, _, err := client.Create(indexinfo); err == nil {
 		t.Error("Duplicate Index Created", indexinfo.Name)
-	} 
+	}
 
 	// List("")
 	if servUuid_, indexinfos, err := client.List(""); err != nil {
