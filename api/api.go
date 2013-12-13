@@ -65,7 +65,7 @@ type IndexInfo struct {
     Bucket     string    // bucket name, for which the index is created.
     IsPrimary  bool      // true/false based on index
     Exprtype   ExprType  // type of `Expression`
-    Index      Finder    // instance of index algorithm.
+    Engine     Finder    // instance of index algorithm.
 }
 
 // Accuracy characterizes if the results of the index is subject to probabilistic errors.
@@ -106,10 +106,10 @@ type TraitInfo struct {
     WorstSpace Complexity
 }
 
-// Indexer is the interface into the index engine
-type IndexManager interface {
+// IndexCatalog is the interface for disk-based catalog for Index Manager
+type IndexCatalog interface {
     // Create builds an instance of index
-    Create(indexInfo IndexInfo) (string, IndexInfo, error)
+    Create(indexInfo IndexInfo) (string, error)
 
     // Drop kills an instance of an index
     Drop(uuid string) (string, error)
@@ -138,7 +138,7 @@ type Key interface {
     Compare(than Key) Ord // compare whether `this` key is less than `than` key
 }
 
-type Value interface{
+type Value interface {
     Bytes() []byte // content of value, typically document-id
 }
 
