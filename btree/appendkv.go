@@ -9,101 +9,101 @@
 package btree
 
 import (
-    "os"
-    "log"
-    "reflect"
-    "unsafe"
+	"log"
+	"os"
+	"reflect"
+	"unsafe"
 )
 
 // Append/Fetch value as either byte-slice or string
 func (store *Store) fetchValue(fpos int64) []byte {
-    return store.wstore.readKV(store.kvRfd, fpos)
+	return store.wstore.readKV(store.kvRfd, fpos)
 }
 
 func (store *Store) fetchValueS(fpos int64) string {
-    return string(store.wstore.readKV(store.kvRfd, fpos))
+	return string(store.wstore.readKV(store.kvRfd, fpos))
 }
 
 func (store *Store) appendValue(val []byte) int64 {
-    return store.wstore.appendKV(val)
+	return store.wstore.appendKV(val)
 }
 
 func (store *Store) appendValueS(val string) int64 {
-    return store.wstore.appendKV([]byte(val))
+	return store.wstore.appendKV([]byte(val))
 }
 
 // Append/Fetch key as either byte-slice or string
 func (store *Store) fetchKey(fpos int64) []byte {
-    x := store.wstore.readKV(store.kvRfd, fpos)
-    return x
+	x := store.wstore.readKV(store.kvRfd, fpos)
+	return x
 }
 
 func (store *Store) fetchKeyS(fpos int64) string {
-    return string(store.wstore.readKV(store.kvRfd, fpos))
+	return string(store.wstore.readKV(store.kvRfd, fpos))
 }
 
 func (store *Store) appendKey(key []byte) int64 {
-    return store.wstore.appendKV(key)
+	return store.wstore.appendKV(key)
 }
 
 func (store *Store) appendKeyS(key string) int64 {
-    return store.wstore.appendKV([]byte(key))
+	return store.wstore.appendKV([]byte(key))
 }
 
 // Append/Fetch Docid as either byte-slice or string
 func (store *Store) fetchDocid(fpos int64) []byte {
-    return store.wstore.readKV(store.kvRfd, fpos)
+	return store.wstore.readKV(store.kvRfd, fpos)
 }
 
 func (store *Store) fetchDocidS(fpos int64) string {
-    return string(store.wstore.readKV(store.kvRfd, fpos))
+	return string(store.wstore.readKV(store.kvRfd, fpos))
 }
 
 func (store *Store) appendDocid(docid []byte) int64 {
-    return store.wstore.appendKV(docid)
+	return store.wstore.appendKV(docid)
 }
 
 func (store *Store) appendDocidS(docid string) int64 {
-    return store.wstore.appendKV([]byte(docid))
+	return store.wstore.appendKV([]byte(docid))
 }
 
 // Read bytes from `kvStore.rfd` at `fpos`.
 func (wstore *WStore) readKV(rfd *os.File, fpos int64) []byte {
-    if _, err := rfd.Seek(fpos, os.SEEK_SET); err != nil {
-        log.Panicln(err, fpos)
-    }
+	if _, err := rfd.Seek(fpos, os.SEEK_SET); err != nil {
+		log.Panicln(err, fpos)
+	}
 
-    buf := make([]byte, 4)
-    rfd.ReadAt(buf, fpos) // Read size field
-    b := make([]byte, bytesToint32(buf))
-    if _, err := rfd.ReadAt(b, fpos+4); err != nil {
-        panic(err)
-    }
-    wstore.countReadKV += 1
-    return b
+	buf := make([]byte, 4)
+	rfd.ReadAt(buf, fpos) // Read size field
+	b := make([]byte, bytesToint32(buf))
+	if _, err := rfd.ReadAt(b, fpos+4); err != nil {
+		panic(err)
+	}
+	wstore.countReadKV += 1
+	return b
 }
 
 func (wstore *WStore) appendKV(val []byte) int64 {
-    wfd := wstore.kvWfd
-    fpos, _ := wfd.Seek(0, os.SEEK_END)
-    buf := int32Tobytes(int32(len(val)))
-    wfd.WriteAt(buf, fpos)
-    if _, err := wfd.WriteAt(val, fpos+4); err != nil {
-        panic(err)
-    }
-    wstore.countAppendKV += 1
-    return fpos
+	wfd := wstore.kvWfd
+	fpos, _ := wfd.Seek(0, os.SEEK_END)
+	buf := int32Tobytes(int32(len(val)))
+	wfd.WriteAt(buf, fpos)
+	if _, err := wfd.WriteAt(val, fpos+4); err != nil {
+		panic(err)
+	}
+	wstore.countAppendKV += 1
+	return fpos
 }
 
 func bytesToint32(buf []byte) int32 {
-    bufp := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
-    size := (*int32)(unsafe.Pointer(bufp.Data))
-    return *size
+	bufp := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+	size := (*int32)(unsafe.Pointer(bufp.Data))
+	return *size
 }
 
 func int32Tobytes(size int32) []byte {
-    buf := make([]byte, 4, 4)
-    bufp := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
-    bufp.Data = (uintptr)(unsafe.Pointer(&size))
-    return buf
+	buf := make([]byte, 4, 4)
+	bufp := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+	bufp.Data = (uintptr)(unsafe.Pointer(&size))
+	return buf
 }
