@@ -127,6 +127,9 @@ type IndexManager interface {
 
     // Get Uuid
     GetUuid() string
+
+    //Check if index already exists for a given bucket
+    Exists(name string, bucket string) error
 }
 
 type Key interface {
