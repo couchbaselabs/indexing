@@ -1,5 +1,5 @@
 // A rest client to be used with server.
-package main
+package client
 
 import (
 	"bytes"
@@ -46,7 +46,7 @@ func (client *RestClient) Create(indexinfo IndexInfo) (
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err = client.httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			if mresp, err = metaResponse(resp); err == nil {
+			if mresp, err = MetaResponse(resp); err == nil {
 				serverUuid, indexinfo = mresp.ServerUuid, mresp.Indexes[0]
 			} else {
 				return "", indexinfo, err
@@ -74,7 +74,7 @@ func (client *RestClient) Drop(uuid string) (string, error) {
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err := client.httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			if mresp, err = metaResponse(resp); err == nil {
+			if mresp, err = MetaResponse(resp); err == nil {
 				serverUuid = mresp.ServerUuid
 			} else {
 				return "", err
@@ -108,7 +108,7 @@ func (client *RestClient) List(serverUuid string) (
 	log.Printf("Posting %v to URL %v", bodybuf, url)
 	if resp, err = client.httpc.Post(url, "application/json", bodybuf); err == nil {
 		defer resp.Body.Close()
-		if mresp, err = metaResponse(resp); err == nil {
+		if mresp, err = MetaResponse(resp); err == nil {
 			serverUuid = mresp.ServerUuid
 			indexes = mresp.Indexes
 		}
@@ -191,7 +191,7 @@ func (client *RestClient) Nodes() ([]NodeInfo, error) {
 	log.Printf("Posting %v to URL %v", bodybuf, url)
 	if resp, err := client.httpc.Post(url, "application/json", bodybuf); err == nil {
 		defer resp.Body.Close()
-		if mresp, err = metaResponse(resp); err == nil {
+		if mresp, err = MetaResponse(resp); err == nil {
 			nodes = mresp.Nodes
 		}
 	}
@@ -216,7 +216,7 @@ func (client *RestClient) Notify(serverUuid string) (ResponseStatus, string, err
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err = client.httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			if mresp, err = metaResponse(resp); err == nil {
+			if mresp, err = MetaResponse(resp); err == nil {
 				serverUuid = mresp.ServerUuid
 				status = mresp.Status
 			}
@@ -226,7 +226,7 @@ func (client *RestClient) Notify(serverUuid string) (ResponseStatus, string, err
 }
 
 // Gather index meta response from http response.
-func metaResponse(resp *http.Response) (IndexMetaResponse, error) {
+func MetaResponse(resp *http.Response) (IndexMetaResponse, error) {
 	var body []byte
 	var err error
 

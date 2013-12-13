@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	. "github.com/couchbaselabs/indexing/api"
+	"github.com/couchbaselabs/indexing/index_manager/client"
 	"log"
 	"net/http"
 )
@@ -25,7 +26,7 @@ func sendCreateToIndexer(indexinfo IndexInfo) error {
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err = httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			_, err = metaResponse(resp)
+			_, err = client.MetaResponse(resp)
 		}
 	}
 	return err
@@ -47,7 +48,7 @@ func sendDropToIndexer(uuid string) error {
 		log.Printf("Posting %v to URL %v", bodybuf, url)
 		if resp, err := httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
-			_, err = metaResponse(resp)
+			_, err = client.MetaResponse(resp)
 		}
 	}
 	return err
