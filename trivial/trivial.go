@@ -2,12 +2,12 @@ package trivial
 
 import (
 	"github.com/couchbaselabs/indexing/api"
-//	"github.com/petar/GoLLRB/llrb"
+	//	"github.com/petar/GoLLRB/llrb"
 	"reflect"
 )
 
 type Trivial struct {
-//	tree llrb.LLRB
+	//	tree llrb.LLRB
 }
 
 func (t *Trivial) Name() string {
@@ -24,10 +24,10 @@ func (t *Trivial) Exists(key api.Key) bool {
 
 func (t *Trivial) Traits(op interface{}) api.TraitInfo {
 
-	switch (reflect.TypeOf(op)) {
+	switch reflect.TypeOf(op) {
 
-		case reflect.TypeOf(t):
-		return api.TraitInfo {
+	case reflect.TypeOf(t):
+		return api.TraitInfo{
 			Unique:     api.NonUnique,
 			Order:      api.Asc,
 			Accuracy:   api.Perfect,
@@ -37,8 +37,8 @@ func (t *Trivial) Traits(op interface{}) api.TraitInfo {
 			WorstSpace: api.On,
 		}
 
-		case reflect.TypeOf((*Trivial).Exists):
-		return api.TraitInfo {
+	case reflect.TypeOf((*Trivial).Exists):
+		return api.TraitInfo{
 			Unique:     api.NonUnique,
 			Order:      api.Asc,
 			Accuracy:   api.Perfect,
@@ -48,19 +48,18 @@ func (t *Trivial) Traits(op interface{}) api.TraitInfo {
 			WorstSpace: api.O1,
 		}
 
-		case reflect.TypeOf((*Trivial).Lookup):
-			return api.TraitInfo {
-				Unique:     api.NonUnique,
-				Order:      api.Asc,
-				Accuracy:   api.Perfect,
-				AvgTime:    api.Ologn,
-				AvgSpace:   api.Om,
-				WorstTime:  api.Ologn,
-				WorstSpace: api.Om,
-			}
+	case reflect.TypeOf((*Trivial).Lookup):
+		return api.TraitInfo{
+			Unique:     api.NonUnique,
+			Order:      api.Asc,
+			Accuracy:   api.Perfect,
+			AvgTime:    api.Ologn,
+			AvgSpace:   api.Om,
+			WorstTime:  api.Ologn,
+			WorstSpace: api.Om,
+		}
 
-		default:
-			panic("Unknown operator:" + reflect.TypeOf(op).Kind().String())
+	default:
+		panic("Unknown operator:" + reflect.TypeOf(op).Kind().String())
 	}
 }
-
