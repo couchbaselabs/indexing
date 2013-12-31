@@ -5,73 +5,83 @@
 
 package api
 
-type RequestType int
+type RequestType string
 
 const (
-    CREATE RequestType = iota // POST /indexes/create
-    DROP                      // DELETE /indexes/uuid
-    LIST                      // GET /indexes/list
-    SCAN                      // GET /indexes/uuid/scan
-    STATS                     // GET /indexes/stats
-    // GET /indexes/uuid/stats
-    NODES  // GET /indexes/nodes
-    NOTIFY // GET /indexes/notify
+    CREATE RequestType = "create"
+    DROP   RequestType = "drop"
+    LIST   RequestType = "list"
+    NOTIFY RequestType = "notify"
+    NODES  RequestType = "nodes"
+    SCAN   RequestType = "scan"
+    STATS  RequestType = "stats"
 )
-
-// URL encoded query params
-type QueryParams struct {
-    Low       Key
-    High      Key
-    Inclusion Inclusion
-    Offset    int
-    Limit     int
-}
 
 // All API accept IndexRequest structure and returns IndexResponse structure.
 // If application is written in Go, and compiled with `indexing` package then
 // they can choose the access the underlying interfaces directly.
 type IndexRequest struct {
-    Type       RequestType
-    Index      IndexInfo
-    ServerUuid string
-    Params     QueryParams
+    Type       RequestType `json:"type,omitempty"`
+    Index      IndexInfo   `json:"index,omitempty"`
+    ServerUuid string      `json:"serverUuid,omitempty"`
+    Params     QueryParams `json:"params,omitempty"`
 }
 
-//RESPONSE DATA FORMATS
-type ResponseStatus int
+// URL encoded query params
+type QueryParams struct {
+    ScanType  ScanType  `json:"scanType,omitempty"`
+    Low       [][]byte  `json:"low,omitempty"`
+    High      [][]byte  `json:"high,omitempty"`
+    Inclusion Inclusion `json:"inclusion,omitempty"`
+    Limit     int64     `json:"limit,omitempty"`
+}
+
+type ScanType string
 
 const (
-    SUCCESS ResponseStatus = iota
-    ERROR
-    INVALID_CACHE
+    COUNT      ScanType = "count"
+    EXISTS     ScanType = "exists"
+    LOOKUP     ScanType = "lookup"
+    RANGESCAN  ScanType = "rangeScan"
+    FULLSCAN   ScanType = "fullScan"
+    RANGECOUNT ScanType = "rangeCount"
+)
+
+//RESPONSE DATA FORMATS
+type ResponseStatus string
+
+const (
+    SUCCESS       ResponseStatus = "success"
+    ERROR         ResponseStatus = "error"
+    INVALID_CACHE ResponseStatus = "invalid_cache"
 )
 
 type IndexRow struct {
-    Key   string
-    Value string
+    Key   [][]byte `json:"key,omitempty"`
+    Value string   `json:"value,omitempty"`
 }
 
 type IndexError struct {
-    Code string
-    Msg  string
+    Code string `json:"code,omitempty"`
+    Msg  string `json:"msg,omitempty"`
 }
 
 type IndexMetaResponse struct {
-    Status     ResponseStatus
-    Indexes    []IndexInfo
-    ServerUuid string
-    Nodes      []NodeInfo
-    Errors     []IndexError
+    Status     ResponseStatus `json:"status,omitempty"`
+    Indexes    []IndexInfo    `json:"indexes,omitempty"`
+    ServerUuid string         `json:"serverUuid,omitempty"`
+    Nodes      []NodeInfo     `json:"nodes,omitempty"`
+    Errors     []IndexError   `json:"errors,omitempty"`
 }
 
 type IndexScanResponse struct {
-    Status    ResponseStatus
-    TotalRows int64
-    Rows      []IndexRow
-    Errors    []IndexError
+    Status    ResponseStatus `json:"status,omitempty"`
+    TotalRows uint64         `json:"totalrows,omitempty"`
+    Rows      []IndexRow     `json:"rows,omitempty"`
+    Errors    []IndexError   `json:"errors,omitempty"`
 }
 
 //Indexer Node Info
 type NodeInfo struct {
-    IndexerURL string
+    IndexerURL string `json:"indexerURL,omitempty"`
 }
