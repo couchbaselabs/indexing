@@ -6,20 +6,21 @@
 package main
 
 import (
-	"bytes"
+	//	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
-	"github.com/couchbaselabs/indexing/engine/llrb"
+	//	"github.com/couchbaselabs/indexing/engine/llrb"
+	"github.com/couchbaselabs/indexing/engine/leveldb"
 	"log"
 	"net/http"
-	"strconv"
+	//	"strconv"
 	"sync"
 )
 
-var c api.IndexCatalog
+var c catalog.IndexCatalog
 var ddlLock sync.Mutex
 
 const (
@@ -31,8 +32,10 @@ func main() {
 
 	// Create index catalog
 	if c, err = catalog.NewIndexCatalog("./"); err != nil {
-		panic(err)
+		log.Fatalf("Fatal error opening catalog: %v", err)
 	}
+
+	openIndexEngine()
 
 	addr := ":8095"
 	// Subscribe to HTTP server handlers
@@ -40,10 +43,17 @@ func main() {
 	http.HandleFunc("/drop", handleDrop)
 	http.HandleFunc("/scan", handleScan)
 	http.HandleFunc("/stats", handleStats)
+
+	//FIXME add error handing to this
+	go StartMutationManager()
+
+	//FIXME This doesn't work on Ctrl-C
+	defer freeResourcesOnExit()
 	log.Println("Indexer Listening on", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Println("Fatal:", err)
+		log.Fatalf("Fatal: %v", err)
 	}
+
 }
 
 // /create
@@ -56,8 +66,8 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	ddlLock.Lock()
 	defer ddlLock.Unlock()
 
-	if _, err = c.Create(indexinfo); err == nil {
-		if err = getIndexEngine(&indexinfo); err == nil {
+	if err = assignIndexEngine(&indexinfo); err == nil {
+		if _, err = c.Create(indexinfo); err == nil {
 			res = api.IndexMetaResponse{
 				Status: api.SUCCESS,
 			}
@@ -68,24 +78,32 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to create index", err)
 	}
+	RegisterIndexWithMutationHandler(indexinfo)
 	sendResponse(w, res)
 }
 
 // /drop
 func handleDrop(w http.ResponseWriter, r *http.Request) {
 	var res api.IndexMetaResponse
+	var err error
 
 	indexinfo := indexRequest(r).Index
 
 	ddlLock.Lock()
 	defer ddlLock.Unlock()
 
-	if _, err := c.Drop(indexinfo.Uuid); err == nil {
-		res = api.IndexMetaResponse{
-			Status: api.SUCCESS,
+	if indexinfo, err = c.Index(indexinfo.Uuid); err == nil {
+		if err = indexinfo.Engine.Destroy(); err == nil {
+			if _, err = c.Drop(indexinfo.Uuid); err == nil {
+				res = api.IndexMetaResponse{
+					Status: api.SUCCESS,
+				}
+			}
 		}
 		log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
-	} else {
+	}
+
+	if err != nil {
 		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to drop index", err)
 	}
@@ -96,46 +114,61 @@ func handleDrop(w http.ResponseWriter, r *http.Request) {
 func handleScan(w http.ResponseWriter, r *http.Request) {
 	var err error
 
-	indexinfo := indexRequest(r).Index // Gather request
+	indexreq := indexRequest(r) // Gather request
+	uuid := indexreq.Index.Uuid
+	q := indexreq.Params
 
-	// Gather and normalizequery parameters
-	r.ParseForm()
-	q := api.QueryParams{
-		Low:       api.Key(api.String(r.Form["Low"][0])),
-		High:      api.Key(api.String(r.Form["High"][0])),
-		Inclusion: api.Inclusion(r.Form["Inclusion"][0]),
-	}
-
-	offset := r.Form["Offset"][0]
-	if offset == "" {
-		q.Offset = 0
-	} else {
-		q.Offset, _ = strconv.Atoi(offset)
-	}
-
-	limit := r.Form["Limit"][0]
-	if limit == "" {
-		q.Limit = DEFAULT_LIMIT
-	} else {
-		q.Limit, _ = strconv.Atoi(limit)
-	}
+	log.Printf("Received Scan Index %v Params %v %v", uuid, q.Low, q.High)
 
 	// Scan
 	rows := make([]api.IndexRow, 0)
-	if indexinfo, err = c.Index(indexinfo.Uuid); err == nil {
-		if q.Low == nil && q.High == nil {
-			rows, err = scanQuery(
-				&indexinfo, q.Offset, q.Limit)
-		} else if bytes.Compare(q.Low.Bytes(), q.High.Bytes()) == 0 {
-			rows, err = rangeQuery(
-				&indexinfo, q.Low, q.High, q.Inclusion, q.Offset, q.Limit)
-		} else if q.Low != nil && q.High != nil {
-			rows, err = lookupQuery(
-				&indexinfo, q.Low, q.Offset, q.Limit)
+	var totalRows uint64
+	var lowkey, highkey api.Key
+
+	if lowkey, err = api.NewKey(q.Low, ""); err != nil {
+		sendScanResponse(w, nil, 0, err)
+		return
+	}
+
+	if highkey, err = api.NewKey(q.High, ""); err != nil {
+		sendScanResponse(w, nil, 0, err)
+		return
+	}
+
+	if indexinfo, err := c.Index(uuid); err == nil {
+		switch q.ScanType {
+
+		case api.COUNT:
+			totalRows, err = countQuery(&indexinfo, q.Limit)
+
+		case api.EXISTS:
+			var exists bool
+			exists, err = existsQuery(&indexinfo, lowkey)
+			if exists {
+				totalRows = 1
+			}
+
+		case api.LOOKUP:
+
+			rows, err = lookupQuery(&indexinfo,
+				lowkey, q.Limit)
+			totalRows = uint64(len(rows))
+
+		case api.RANGESCAN:
+
+			rows, err = rangeQuery(&indexinfo, lowkey, highkey, q.Inclusion, q.Limit)
+			totalRows = uint64(len(rows))
+
+		case api.FULLSCAN:
+			rows, err = scanQuery(&indexinfo, q.Limit)
+			totalRows = uint64(len(rows))
+
+		case api.RANGECOUNT:
+			totalRows, err = rangeCountQuery(&indexinfo, lowkey, highkey, q.Inclusion, q.Limit)
 		}
 	}
 	// send back the response
-	sendScanResponse(w, rows, err)
+	sendScanResponse(w, rows, totalRows, err)
 }
 
 // /stats.
@@ -144,40 +177,74 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 //---- helper functions
-func scanQuery(indexinfo *api.IndexInfo, offset, limit int) (
+
+func countQuery(indexinfo *api.IndexInfo, limit int64) (
+	uint64, error) {
+
+	if counter, ok := indexinfo.Engine.(api.Counter); ok {
+		count, err := counter.CountTotal()
+		return count, err
+	}
+	err := errors.New("Index does not support Looker interface")
+	return uint64(0), err
+}
+
+func existsQuery(indexinfo *api.IndexInfo, key api.Key) (bool, error) {
+
+	if exister, ok := indexinfo.Engine.(api.Exister); ok {
+		exists := exister.Exists(key)
+		return exists, nil
+	}
+	err := errors.New("Index does not support Exister interface")
+	return false, err
+}
+
+func scanQuery(indexinfo *api.IndexInfo, limit int64) (
 	[]api.IndexRow, error) {
 
 	if looker, ok := indexinfo.Engine.(api.Looker); ok {
-		chkv, cherr := looker.KVSet()
-		return receiveKV(chkv, cherr, offset, limit)
+		ch, cherr := looker.ValueSet()
+		return receiveValue(ch, cherr, limit)
 	}
-	err := errors.New("index does not support Looker interface")
+	err := errors.New("Index does not support Looker interface")
 	return nil, err
 }
 
 func rangeQuery(
-	indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion, offset,
-	limit int) ([]api.IndexRow, error) {
+	indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion,
+	limit int64) ([]api.IndexRow, error) {
 
 	if ranger, ok := indexinfo.Engine.(api.Ranger); ok {
-		chkv, cherr, _ := ranger.KVRange(low, high, incl)
-		return receiveKV(chkv, cherr, offset, limit)
+		ch, cherr, _ := ranger.ValueRange(low, high, incl)
+		return receiveValue(ch, cherr, limit)
 	}
-	err := errors.New("index does not support ranger interface")
+	err := errors.New("Index does not support ranger interface")
 	return nil, err
 }
 
-func lookupQuery(indexinfo *api.IndexInfo, key api.Key, offset, limit int) (
+func lookupQuery(indexinfo *api.IndexInfo, key api.Key, limit int64) (
 	[]api.IndexRow, error) {
 
 	if looker, ok := indexinfo.Engine.(api.Looker); ok {
+		log.Printf("Looking up key %s", key.String())
 		ch, cherr := looker.Lookup(key)
-		return receiveValue(key, ch, cherr, offset, limit)
+		return receiveValue(ch, cherr, limit)
 	}
-	err := errors.New("index does not support looker interface")
+	err := errors.New("Index does not support looker interface")
 	return nil, err
 }
 
+func rangeCountQuery(
+	indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion,
+	limit int64) (uint64, error) {
+
+	if rangeCounter, ok := indexinfo.Engine.(api.RangeCounter); ok {
+		totalRows, err := rangeCounter.CountRange(low, high, incl)
+		return totalRows, err
+	}
+	err := errors.New("Index does not support RangeCounter interface")
+	return 0, err
+}
 func sendResponse(w http.ResponseWriter, res interface{}) {
 	var buf []byte
 	var err error
@@ -190,13 +257,13 @@ func sendResponse(w http.ResponseWriter, res interface{}) {
 	w.Write(buf)
 }
 
-func sendScanResponse(w http.ResponseWriter, rows []api.IndexRow, err error) {
+func sendScanResponse(w http.ResponseWriter, rows []api.IndexRow, totalRows uint64, err error) {
 	var res api.IndexScanResponse
 
 	if err == nil {
 		res = api.IndexScanResponse{
 			Status:    api.SUCCESS,
-			TotalRows: int64(len(rows)),
+			TotalRows: totalRows,
 			Rows:      rows,
 			Errors:    nil,
 		}
@@ -204,7 +271,7 @@ func sendScanResponse(w http.ResponseWriter, rows []api.IndexRow, err error) {
 		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
 		res = api.IndexScanResponse{
 			Status:    api.SUCCESS,
-			TotalRows: int64(0),
+			TotalRows: uint64(0),
 			Rows:      nil,
 			Errors:    []api.IndexError{indexerr},
 		}
@@ -212,60 +279,35 @@ func sendScanResponse(w http.ResponseWriter, rows []api.IndexRow, err error) {
 	sendResponse(w, res)
 }
 
-func receiveKV(ch chan api.KV, cherr chan error, offset, limit int) (
+func receiveValue(ch chan api.Value, cherr chan error, limit int64) (
 	[]api.IndexRow, error) {
 
-	for offset > 0 {
-		select {
-		case <-ch:
-			offset--
-		case err := <-cherr:
-			return nil, err
-		}
+	//FIXME limit should be sent to the engine and only limit response be sent on the
+	//channel
+	rows := make([]api.IndexRow, 0)
+	var nolimit = false
+	if limit == 0 {
+		nolimit = true
 	}
-
-	rows := make([]api.IndexRow, 0, limit)
-	for limit > 0 {
+	ok := true
+	var value api.Value
+	var err error
+	for ok && (limit > 0 || nolimit) {
 		select {
-		case kv := <-ch:
-			key, value := kv[0].(api.Key), kv[1].(api.Value)
-			row := api.IndexRow{
-				Key:   string(key.Bytes()),
-				Value: string(value.Bytes()),
+		case value, ok = <-ch:
+			if ok {
+				log.Printf("Indexer Received Value %s", value.String())
+				row := api.IndexRow{
+					Key:   value.KeyBytes(),
+					Value: value.Docid(),
+				}
+				rows = append(rows, row)
+				limit--
 			}
-			rows = append(rows, row)
-			limit--
-		case err := <-cherr:
-			return rows, err
-		}
-	}
-	return rows, nil
-}
-
-func receiveValue(key api.Key, ch chan api.Value, cherr chan error, offset, limit int) (
-	[]api.IndexRow, error) {
-
-	for offset > 0 {
-		select {
-		case <-ch:
-			offset--
-		case err := <-cherr:
-			return nil, err
-		}
-	}
-
-	rows := make([]api.IndexRow, 0, limit)
-	for limit > 0 {
-		select {
-		case value := <-ch:
-			row := api.IndexRow{
-				Key:   string(key.Bytes()),
-				Value: string(value.Bytes()),
+		case err, ok = <-cherr:
+			if err != nil {
+				return rows, err
 			}
-			rows = append(rows, row)
-			limit--
-		case err := <-cherr:
-			return rows, err
 		}
 	}
 	return rows, nil
@@ -291,14 +333,73 @@ func createMetaResponseFromError(err error) api.IndexMetaResponse {
 }
 
 // Instantiate index engine
-func getIndexEngine(index *api.IndexInfo) error {
+func assignIndexEngine(indexinfo *api.IndexInfo) error {
 	var err error
-	index.Engine = nil
-	switch index.Using {
+	indexinfo.Engine = nil
+	switch indexinfo.Using {
+	//	case api.Llrb:
+	//		indexinfo.Engine = llrb.NewIndexEngine(indexinfo.Uuid)
 	case api.Llrb:
-		index.Engine = llrb.NewIndexEngine(index.Name)
+		indexinfo.Engine = leveldb.NewIndexEngine(indexinfo.Uuid)
 	default:
-		err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", index.Using))
+		err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", indexinfo.Using))
 	}
 	return err
+}
+
+func openIndexEngine() error {
+
+	var err error
+	var indexinfos []api.IndexInfo
+	//For the existing indexes, open the existing engine
+	if _, indexinfos, err = c.List(""); err != nil {
+		log.Printf("Error while retrieving index list %v", err)
+		return err
+	}
+
+	for _, indexinfo := range indexinfos {
+		log.Printf("Try Finding Existing Engine for Index %v", indexinfo)
+		switch indexinfo.Using {
+		case api.Llrb:
+			indexinfo.Engine = leveldb.OpenIndexEngine(indexinfo.Uuid)
+			log.Printf("Got Existing Engine for Index %v", indexinfo.Uuid)
+		default:
+			err = errors.New(fmt.Sprintf("Unknown Index Type. Skipping Opening Engine"))
+		}
+	}
+
+	return err
+
+}
+
+func freeResourcesOnExit() {
+
+	//purge the catalog
+	if err := c.Purge(); err != nil {
+		log.Printf("Error Purging Catalog %v", err)
+	}
+
+	//close the index engines
+	if err := closeIndexEngines(); err != nil {
+		log.Printf("Error Closing Index Engine %v", err)
+	}
+
+	//FIXME close the mutation manager?
+
+}
+
+func closeIndexEngines() error {
+
+	if _, indexinfos, err := c.List(""); err == nil {
+
+		for _, indexinfo := range indexinfos {
+			if err := indexinfo.Engine.Close(); err != nil {
+				return err
+			}
+		}
+	} else {
+		return err
+	}
+
+	return nil
 }
