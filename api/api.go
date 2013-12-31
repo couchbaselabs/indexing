@@ -19,14 +19,14 @@ const (
     CBTree            = "cbtree"
 )
 
-// Inclusion, controls how the boundaries values of a range are treated
-type Inclusion string
+// Inclusion controls how the boundaries values of a range are treated
+type Inclusion int
 
 const (
-    Neither Inclusion = "none"
-    Left              = "left"
-    Right             = "right"
-    Both              = "both"
+    Neither Inclusion = iota
+    Low
+    High
+    Both
 )
 
 // Uniqueness, characterizes if the algorithm demands unique keys
@@ -58,14 +58,14 @@ const (
 // Every index ever created and maintained by this package will have an
 // associated index-info structure.
 type IndexInfo struct {
-    Name       string    // Name of the index
-    Uuid       string    // unique id for every new index created.
-    Using      IndexType // indexing algorithm to use / used.
-    OnExprList []string  // expression list
-    Bucket     string    // bucket name, for which the index is created.
-    IsPrimary  bool      // true/false based on index
-    Exprtype   ExprType  // type of `Expression`
-    Engine     Finder    // instance of index algorithm.
+    Name       string    `json:"name,omitempty"`       // Name of the index
+    Uuid       string    `json:"uuid,omitempty"`       // unique id for every index
+    Using      IndexType `json:"using,omitempty"`      // indexing algorithm
+    OnExprList []string  `json:"onExprList,omitempty"` // expression list
+    Bucket     string    `json:"bucket,omitempty"`     // bucket name
+    IsPrimary  bool      `json:"isPrimary,omitempty"`
+    Exprtype   ExprType  `json:"exprType,omitempty"`
+    Engine     Finder    `json:"engine,omitempty"` // instance of index algorithm.
 }
 
 // Accuracy characterizes if the results of the index is subject to probabilistic errors.
@@ -106,49 +106,56 @@ type TraitInfo struct {
     WorstSpace Complexity
 }
 
-// IndexCatalog is the interface for disk-based catalog for Index Manager
-type IndexCatalog interface {
-    // Create builds an instance of index
-    Create(indexInfo IndexInfo) (string, error)
-
-    // Drop kills an instance of an index
-    Drop(uuid string) (string, error)
-
-    // If `ServerUuid` is not nil, then check to see if the local ServerUUID
-    // matches it. A match means client already has latest server
-    // information and index data is not sent. A zero value makes server send
-    // the latest index data unconditionally.
-    //
-    // Returned list IndexInfo won't contain the index instance.
-    List(ServerUuid string) (string, []IndexInfo, error)
-
-    // Gets a specific instance
-    Index(uuid string) (IndexInfo, error)
-
-    // Get Uuid
-    GetUuid() string
-
-    //Check if index already exists for a given bucket
-    Exists(name string, bucket string) error
+// Key is an array of JSON objects, per encoding/json
+type Key struct {
+    raw     keydata
+    encoded []byte //collatejson byte representation of the key
 }
 
-type Key interface {
-    Bytes() []byte        // content of key as byte representation
-    Less(than Key) bool   // compare whether `this` key is less than `than` key
-    Compare(than Key) Ord // compare whether `this` key is less than `than` key
+type keydata struct {
+    keybytes Keybytes
+    docid    string
 }
 
-type Value interface {
-    Bytes() []byte // content of value, typically document-id
+// Value is the primary key of the relavent document
+type Value struct {
+    raw     valuedata
+    encoded []byte
 }
 
-type KV [2]interface{} // [Key, Value]
+type valuedata struct {
+    Keybytes Keybytes
+    Docid    string
+    Vbucket  int
+    Seqno    int64
+}
+
+type Keybytes [][]byte
+
+type Persister interface {
+
+    //Persist a key/value pair
+    InsertMutation(key Key, value Value) error
+
+    //Delete a key/value pair by docId
+    DeleteMutation(docid string) error
+
+    //Get an existing key/value pair by key
+    GetBackIndexEntry(docid string) (Key, error)
+
+    //Close the db. Should be able to reopen after this operation
+    Close() error
+
+    //Destroy/Wipe the DB completely
+    Destroy() error
+}
 
 // Algorithm is the basic capability of any index algorithm
 type Finder interface {
     Name() string
-    Purge()
+    //  Purge()
     Trait(operator interface{}) TraitInfo
+    Persister
 }
 
 // Counter is a class of algorithms that return total node count efficiently
@@ -175,7 +182,6 @@ type Looker interface {
     Lookup(key Key) (chan Value, chan error)
     KeySet() (chan Key, chan error)
     ValueSet() (chan Value, chan error)
-    KVSet() (chan KV, chan error)
 }
 
 // Ranger is a class of algorithms that can extract a range of keys from the
@@ -184,7 +190,6 @@ type Ranger interface {
     Looker
     KeyRange(low, high Key, inclusion Inclusion) (chan Key, chan error, SortOrder)
     ValueRange(low, high Key, inclusion Inclusion) (chan Value, chan error, SortOrder)
-    KVRange(low Key, high Key, inclusion Inclusion) (chan KV, chan error, SortOrder)
 }
 
 // RangeCounter is a class of algorithms that can count a range efficiently
