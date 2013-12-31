@@ -27,6 +27,36 @@ import (
 	"sync"
 )
 
+// IndexCatalog is the interface for disk-based catalog for Index Manager
+
+type IndexCatalog interface {
+	// Create builds an instance of index
+	Create(indexInfo api.IndexInfo) (string, error)
+
+	// Drop kills an instance of an index
+	Drop(uuid string) (string, error)
+
+	// If `ServerUuid` is not nil, then check to see if the local    ServerUUID
+	// matches it. A match means client already has latest server
+	// information and index data is not sent. A zero value makes    server send
+	// the latest index data unconditionally.
+	//
+	// Returned list IndexInfo won't contain the index instance.
+	List(ServerUuid string) (string, []api.IndexInfo, error)
+
+	// Gets a specific instance
+	Index(uuid string) (api.IndexInfo, error)
+
+	// Get Uuid
+	GetUuid() string
+
+	//Check if index already exists for a given bucket
+	Exists(name string, bucket string) error
+
+	//Purge the catalog
+	Purge() error
+}
+
 const (
 	CATALOGFILE string = "index_catalog.dat" // contains gob data
 )
