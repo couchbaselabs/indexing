@@ -16,7 +16,7 @@ import (
 	"sync"
 )
 
-var c api.IndexCatalog
+var c catalog.IndexCatalog
 var longPolls = make([]chan string, 0)
 var mutex sync.Mutex
 
@@ -56,6 +56,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	defer ddlLock.Unlock()
 
 	indexinfo := indexRequest(r).Index // Get IndexInfo, without the `uuid`
+
 	// Normalize IndexInfo
 	if indexinfo.Exprtype == "" {
 		indexinfo.Exprtype = api.N1QL
