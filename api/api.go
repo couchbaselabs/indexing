@@ -197,3 +197,13 @@ type RangeCounter interface {
     Finder
     CountRange(low Key, high Key, inclusion Inclusion) (uint64, error)
 }
+
+// Mutations from projector to indexer.
+type Mutation struct {
+    Type         string
+    Indexid      string
+    SecondaryKey [][]byte
+    Docid        string
+    Vbucket      int
+    Seqno        int64
+}

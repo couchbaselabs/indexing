@@ -18,10 +18,11 @@ func NewKey(data [][]byte, docid string) (Key, error) {
 	key.raw.keybytes = data
 	key.raw.docid = docid
 
+	jsoncodec := collatejson.NewCodec()
 	//convert key to its collatejson encoded byte representation
 	buf := new(bytes.Buffer)
 	for _, k := range key.raw.keybytes {
-		if _, err = buf.Write(collatejson.Encode(k)); err != nil {
+		if _, err = buf.Write(jsoncodec.Encode(k)); err != nil {
 			return key, err
 		}
 		if _, err = buf.Write(KEY_SEPARATOR); err != nil {
