@@ -10,22 +10,13 @@ import (
 	"net/rpc/jsonrpc"
 )
 
-type Mutation struct {
-	Type         string
-	Indexid      string
-	SecondaryKey [][]byte
-	Docid        string
-	Vbucket      int
-	Seqno        int64
-}
-
 type MutationManager struct {
 	indexmap map[string]api.Finder
 }
 
 var mutationMgr MutationManager
 
-func (m *MutationManager) ProcessSingleMutation(mutation *Mutation, reply *bool) error {
+func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *bool) error {
 	log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
 
 	//FIXME change this to channel based
@@ -95,7 +86,7 @@ func StartMutationManager() error {
 	server.HandleHTTP(rpc.DefaultRPCPath, rpc.DefaultDebugPath)
 	mutationMgr.indexmap = make(map[string]api.Finder)
 
-	l, e := net.Listen("tcp", ":8222")
+	l, e := net.Listen("tcp", ":8096")
 	if e != nil {
 		return e
 	}

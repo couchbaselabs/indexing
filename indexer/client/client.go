@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/couchbaselabs/dparval"
+	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/tuqtng/ast"
 	"log"
 	"net"
@@ -32,39 +33,29 @@ func main() {
 	input := []string{
 		//        `{"type":"property","path":"orderlines"}`,
 		`{"type":"property","path":"id"}`,
-		//		`{"type":"property","path":"bool"}`,
-		//		`{"type":"property","path":"boolstr"}`,
-		//		`{"type":"property","path":"map"}`,
+		//      `{"type":"property","path":"bool"}`,
+		//      `{"type":"property","path":"boolstr"}`,
+		//      `{"type":"property","path":"map"}`,
 		//      `{"type":"property","path":"shipped-on"}`,
 	}
 
-	type IndexKey []interface{}
-	type Mutation struct {
-		Type         string
-		Indexid      string
-		SecondaryKey IndexKey
-		Docid        string
-		Vbucket      int
-		Seqno        int64
-	}
-
-	insert := &Mutation{
+	insert := &api.Mutation{
 		Type:         "INSERT",
 		Indexid:      "5c07456c-3256-4099-78c0-3aebfc4bdef6",
-		SecondaryKey: make(IndexKey, 0),
+		SecondaryKey: make([][]byte, 0),
 		Docid:        "doc1",
 		Vbucket:      1,
 		Seqno:        1,
 	}
 	/*
-	   	delete := &Mutation{
-	           Type:   "DELETE",
-	           Indexid: "2049bff0-2638-403c-6c6a-853cf792f5ee",
-	   		SecondaryKey: make(IndexKey, 0),
-	   		Docid:        "doc1",
-	   		Vbucket:      1,
-	   		Seqno:        1,
-	   	}
+	   delete := &api.Mutation{
+	       Type:   "DELETE",
+	       Indexid: "2049bff0-2638-403c-6c6a-853cf792f5ee",
+	       SecondaryKey: make([][]byte, 0),
+	       Docid:        "doc1",
+	       Vbucket:      1,
+	       Seqno:        1,
+	   }
 	*/
 	for _, v := range input {
 		expr, err := ast.UnmarshalExpression([]byte(v))
@@ -86,7 +77,7 @@ func main() {
 	c := jsonrpc.NewClient(conn)
 
 	err = c.Call("MutationManager.ProcessSingleMutation", insert, &reply)
-	//	err = c.Call("MutationManager.ProcessSingleMutation", delete, &reply)
+	//  err = c.Call("MutationManager.ProcessSingleMutation", delete, &reply)
 	if err != nil {
 		log.Fatal("Mutation error:", err)
 	}
