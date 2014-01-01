@@ -135,7 +135,8 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if indexinfo, err := c.Index(uuid); err == nil {
+	var indexinfo api.IndexInfo
+	if indexinfo, err = c.Index(uuid); err == nil {
 		switch q.ScanType {
 
 		case api.COUNT:
@@ -150,8 +151,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 
 		case api.LOOKUP:
 
-			rows, err = lookupQuery(&indexinfo,
-				lowkey, q.Limit)
+			rows, err = lookupQuery(&indexinfo, lowkey, q.Limit)
 			totalRows = uint64(len(rows))
 
 		case api.RANGESCAN:
@@ -270,7 +270,7 @@ func sendScanResponse(w http.ResponseWriter, rows []api.IndexRow, totalRows uint
 	} else {
 		indexerr := api.IndexError{Code: string(api.ERROR), Msg: err.Error()}
 		res = api.IndexScanResponse{
-			Status:    api.SUCCESS,
+			Status:    api.ERROR,
 			TotalRows: uint64(0),
 			Rows:      nil,
 			Errors:    []api.IndexError{indexerr},
