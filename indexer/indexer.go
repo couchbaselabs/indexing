@@ -6,17 +6,14 @@
 package main
 
 import (
-	//	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
-	//	"github.com/couchbaselabs/indexing/engine/llrb"
 	"github.com/couchbaselabs/indexing/engine/leveldb"
 	"log"
 	"net/http"
-	//	"strconv"
 	"sync"
 )
 
@@ -337,9 +334,7 @@ func assignIndexEngine(indexinfo *api.IndexInfo) error {
 	var err error
 	indexinfo.Engine = nil
 	switch indexinfo.Using {
-	//	case api.Llrb:
-	//		indexinfo.Engine = llrb.NewIndexEngine(indexinfo.Uuid)
-	case api.Llrb:
+	case api.LevelDB:
 		indexinfo.Engine = leveldb.NewIndexEngine(indexinfo.Uuid)
 	default:
 		err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", indexinfo.Using))
@@ -360,7 +355,7 @@ func openIndexEngine() error {
 	for _, indexinfo := range indexinfos {
 		log.Printf("Try Finding Existing Engine for Index %v", indexinfo)
 		switch indexinfo.Using {
-		case api.Llrb:
+		case api.LevelDB:
 			indexinfo.Engine = leveldb.OpenIndexEngine(indexinfo.Uuid)
 			log.Printf("Got Existing Engine for Index %v", indexinfo.Uuid)
 		default:
