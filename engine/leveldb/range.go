@@ -32,11 +32,15 @@ func (ldb *LevelDBEngine) CountTotal() (uint64, error) {
 // api.Exister interface
 func (ldb *LevelDBEngine) Exists(key api.Key) bool {
 
-	//FIXME needs implementation
-	//	if _, err := ldb.Get(key); err != nil {
-	//		return false
-	//	}
-	return true
+	var totalRows uint64
+	var err error
+	if totalRows, err = ldb.CountRange(key, key, api.Both); err != nil {
+		return false
+	}
+	if totalRows > 0 {
+		return true
+	}
+	return false
 }
 
 // api.Looker interface
