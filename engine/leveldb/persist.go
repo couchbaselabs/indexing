@@ -198,19 +198,41 @@ func (ldb *LevelDBEngine) GetKeySetForKeyRange(low api.Key, high api.Key,
 			continue
 		}
 
-		var cmp int
+		log.Printf("LevelDB Got Key - %s", key.String())
+
+		var highcmp int
 		if high.EncodedBytes() == nil {
-			cmp = -1 //if high key is nil, iterate through the fullset
+			highcmp = -1 //if high key is nil, iterate through the fullset
 		} else {
-			cmp = key.Compare(high)
+			highcmp = key.Compare(high)
 		}
 
-		if cmp == -1 { //key is less than high
+		var lowcmp int
+		if low.EncodedBytes() == nil {
+			lowcmp = 1 //all keys are greater than nil
+		} else {
+			lowcmp = key.Compare(low)
+		}
+
+		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+			log.Printf("LevelDB Sending Key Equal to High Key")
 			chkey <- key
-		} else if cmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
+			log.Printf("LevelDB Sending Key Equal to Low Key")
+			chkey <- key
+		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
+			if highcmp == -1 {
+				log.Printf("LevelDB Sending Key Lesser Than High Key")
+			} else if lowcmp == 1 {
+				log.Printf("LevelDB Sending Key Greater Than Low Key")
+			}
 			chkey <- key
 		} else {
-			break
+			log.Printf("LevelDB not Sending Key")
+			//if we have reached past the high key, no need to scan further
+			if highcmp == 1 {
+				break
+			}
 		}
 	}
 
@@ -265,22 +287,39 @@ func (ldb *LevelDBEngine) GetValueSetForKeyRange(low api.Key, high api.Key,
 
 		log.Printf("LevelDB Got Value - %s", val.String())
 
-		var cmp int
+		var highcmp int
 		if high.EncodedBytes() == nil {
-			cmp = -1 //if high key is nil, iterate through the fullset
+			highcmp = -1 //if high key is nil, iterate through the fullset
 		} else {
-			cmp = key.Compare(high)
+			highcmp = key.Compare(high)
 		}
 
-		if cmp == -1 { //key is less than high
-			log.Printf("LevelDB Sending Value Lesser Than High Key")
+		var lowcmp int
+		if low.EncodedBytes() == nil {
+			lowcmp = 1 //all keys are greater than nil
+		} else {
+			lowcmp = key.Compare(low)
+		}
+
+		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+			log.Printf("LevelDB Sending Value Equal to High Key")
 			chval <- val
-		} else if cmp == 0 && (inclusion == api.Both || inclusion == api.High) {
-			log.Printf("LevelDB Sending Value Equal to Key")
+		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
+			log.Printf("LevelDB Sending Value Equal to Low Key")
+			chval <- val
+		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
+			if highcmp == -1 {
+				log.Printf("LevelDB Sending Value Lesser Than High Key")
+			} else if lowcmp == 1 {
+				log.Printf("LevelDB Sending Value Greater Than Low Key")
+			}
 			chval <- val
 		} else {
 			log.Printf("LevelDB not Sending Value")
-			break
+			//if we have reached past the high key, no need to scan further
+			if highcmp == 1 {
+				break
+			}
 		}
 	}
 
@@ -326,19 +365,41 @@ func (ldb *LevelDBEngine) CountRange(low api.Key, high api.Key, inclusion api.In
 			continue
 		}
 
-		var cmp int
+		log.Printf("LevelDB Got Key - %s", key.String())
+
+		var highcmp int
 		if high.EncodedBytes() == nil {
-			cmp = -1 //if high key is nil, iterate through the fullset
+			highcmp = -1 //if high key is nil, iterate through the fullset
 		} else {
-			cmp = key.Compare(high)
+			highcmp = key.Compare(high)
 		}
 
-		if cmp == -1 { //key is less than high
+		var lowcmp int
+		if low.EncodedBytes() == nil {
+			lowcmp = 1 //all keys are greater than nil
+		} else {
+			lowcmp = key.Compare(low)
+		}
+
+		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+			log.Printf("LevelDB Sending Value Equal to High Key")
 			count++
-		} else if cmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
+			log.Printf("LevelDB Sending Value Equal to Low Key")
+			count++
+		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
+			if highcmp == -1 {
+				log.Printf("LevelDB Sending Value Lesser Than High Key")
+			} else if lowcmp == 1 {
+				log.Printf("LevelDB Sending Value Greater Than Low Key")
+			}
 			count++
 		} else {
-			break
+			log.Printf("LevelDB not Sending Value")
+			//if we have reached past the high key, no need to scan further
+			if highcmp == 1 {
+				break
+			}
 		}
 	}
 
