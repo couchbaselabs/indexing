@@ -114,7 +114,7 @@ var tapop2type = map[mc.TapOpcode]string{
 }
 
 func loop(c *rpc.Client, notifych chan string, tapch chan []interface{},
-    bucketexprs map[[3]string][]ast.Expression) {
+    bucketexprs map[*api.IndexInfo][]ast.Expression) {
 
 Loop:
     for {
@@ -126,16 +126,20 @@ Loop:
             tapbucket, tevent := msg[0].(string), msg[1].(mc.TapEvent)
             op := tevent.Opcode
             if op == mc.TapMutation || op == mc.TapDeletion {
-                for idx, astexprs := range bucketexprs {
-                    bucket, _, idxuuid := idx[0], idx[1], idx[2]
+                for indexinfo, astexprs := range bucketexprs {
+                    bucket, idxuuid := indexinfo.Bucket, indexinfo.Uuid
                     if tapbucket != bucket {
                         continue
                     }
                     m := api.Mutation{
                         Type:         tapop2type[tevent.Opcode],
                         Indexid:      idxuuid,
-                        SecondaryKey: evaluate(tevent.Value, astexprs),
                         Docid:        string(tevent.Key),
+                    }
+                    if indexinfo.IsPrimary {
+                        m.Value = tevent.Value
+                    } else {
+                        m.SecondaryKey = evaluate(tevent.Value, astexprs)
                     }
                     log.Println("mutation recevied", tevent.Opcode, idxuuid, bucket, m.Docid, m.SecondaryKey)
                     var r bool
@@ -163,10 +167,9 @@ func evaluate(value []byte, astexprs []ast.Expression) [][]byte {
     return secKey
 }
 
-func parseExpression(indexinfos []api.IndexInfo) map[[3]string][]ast.Expression {
-    bucketexprs := make(map[[3]string][]ast.Expression)
+func parseExpression(indexinfos []api.IndexInfo) map[*api.IndexInfo][]ast.Expression {
+    bucketexprs := make(map[*api.IndexInfo][]ast.Expression)
     for _, indexinfo := range indexinfos {
-        idx := [3]string{indexinfo.Bucket, indexinfo.Name, indexinfo.Uuid}
         astexprs := make([]ast.Expression, 0)
         for _, expr := range indexinfo.OnExprList {
             if ex, err := ast.UnmarshalExpression([]byte(expr)); err == nil {
@@ -175,7 +178,7 @@ func parseExpression(indexinfos []api.IndexInfo) map[[3]string][]ast.Expression 
                 panic(err)
             }
         }
-        bucketexprs[idx] = astexprs
+        bucketexprs[&indexinfo] = astexprs
     }
     return bucketexprs
 }
@@ -213,20 +216,19 @@ func tapStream(pool couchbase.Pool, indexinfos []api.IndexInfo,
             panic(err)
         } else {
             feeds[indexinfo.Bucket] = &Feed{bucket, feed}
-            go runFeed(feed, indexinfo, tapch)
+            go runFeed(feed, indexinfo.Bucket, tapch)
         }
     }
     return
 }
 
-func runFeed(feed *couchbase.TapFeed, indexinfo api.IndexInfo, tapch chan []interface{}) {
-    bucket := indexinfo.Bucket
-    log.Println("feed for bucket", bucket, "...")
+func runFeed(feed *couchbase.TapFeed, b string, tapch chan []interface{}) {
+    log.Println("feed for bucket", b, "...")
     for {
         if event, ok := <-feed.C; ok {
-            tapch <- []interface{}{bucket, event}
+            tapch <- []interface{}{b, event}
         } else {
-            log.Println("closing tap feed for", bucket)
+            log.Println("closing tap feed for", b)
             break
         }
     }

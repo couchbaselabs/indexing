@@ -206,4 +206,5 @@ type Mutation struct {
     Docid        string
     Vbucket      int
     Seqno        int64
+    Value        []byte
 }
