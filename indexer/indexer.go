@@ -19,10 +19,7 @@ import (
 
 var c catalog.IndexCatalog
 var ddlLock sync.Mutex
-
-const (
-	DEFAULT_LIMIT int = 100
-)
+var chnotify chan ddlNotification
 
 func main() {
 	var err error
@@ -42,7 +39,11 @@ func main() {
 	http.HandleFunc("/stats", handleStats)
 
 	//FIXME add error handing to this
-	go StartMutationManager()
+
+	if chnotify, err = StartMutationManager(); err != nil {
+		log.Printf("Error Starting Mutation Manager %v", err)
+		return
+	}
 
 	//FIXME This doesn't work on Ctrl-C
 	defer freeResourcesOnExit()
@@ -65,6 +66,13 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	if err = assignIndexEngine(&indexinfo); err == nil {
 		if _, err = c.Create(indexinfo); err == nil {
+			//notify mutation manager about the new index
+			notification := ddlNotification{
+				ddltype:   api.CREATE,
+				indexinfo: indexinfo,
+			}
+			chnotify <- notification
+
 			res = api.IndexMetaResponse{
 				Status: api.SUCCESS,
 			}
@@ -75,7 +83,6 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		res = createMetaResponseFromError(err)
 		log.Println("ERROR: Failed to create index", err)
 	}
-	RegisterIndexWithMutationHandler(indexinfo)
 	sendResponse(w, res)
 }
 
@@ -90,14 +97,25 @@ func handleDrop(w http.ResponseWriter, r *http.Request) {
 	defer ddlLock.Unlock()
 
 	if indexinfo, err = c.Index(indexinfo.Uuid); err == nil {
+		//Notify mutation manager before destroying the engine
+		notification := ddlNotification{
+			ddltype:   api.DROP,
+			indexinfo: indexinfo,
+		}
+		chnotify <- notification
+
 		if err = indexinfo.Engine.Destroy(); err == nil {
 			if _, err = c.Drop(indexinfo.Uuid); err == nil {
 				res = api.IndexMetaResponse{
 					Status: api.SUCCESS,
 				}
+				log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
 			}
 		}
-		log.Printf("Dropped index(%v) %v", indexinfo.Uuid, indexinfo.Name)
+
+		if err != nil {
+			//FIXME need to renotify the mutation manager??
+		}
 	}
 
 	if err != nil {
