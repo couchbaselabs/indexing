@@ -1,105 +1,87 @@
 package main
 
 import (
-	"github.com/couchbaselabs/go-couchbase"
-	"github.com/couchbaselabs/indexing/api"
-	mc "github.com/dustin/gomemcached/client"
-	"github.com/prataprc/goupr"
-	"log"
+    "github.com/couchbaselabs/go-couchbase"
+    mc "github.com/dustin/gomemcached/client"
+    "github.com/prataprc/goupr"
+    "log"
 )
 
-type Feed struct {
-	streams   *TapStreams
-	bucket    *couchbase.Bucket
-	tapfeed   *couchbase.TapFeed
-	indexinfo *api.IndexInfo
-}
-
 type TapStreams struct {
-	eventch    chan *goupr.StreamEvent
-	pool       couchbase.Pool
-	indexinfos []api.IndexInfo
-	feeds      map[string]*Feed
+    pool    couchbase.Pool
+    buckets map[string]*couchbase.Bucket // [bucketname]*couchbase.Bucket
+    feeds   map[string]*couchbase.TapFeed // [bucketname]*couchbase.TapFeed
+    eventch chan *goupr.StreamEvent
 }
 
 var tapop2type = map[mc.TapOpcode]string{
-	mc.TapMutation: "INSERT",
-	mc.TapDeletion: "DELETE",
+    mc.TapMutation: "INSERT",
+    mc.TapDeletion: "DELETE",
 }
 
-func NewTapStreams(p couchbase.Pool, iinfos []api.IndexInfo,
-	eventch chan *goupr.StreamEvent) *TapStreams {
+func NewTapStreams(p couchbase.Pool, 
+    eventch chan *goupr.StreamEvent) *TapStreams {
 
-	return &TapStreams{
-		eventch:    eventch,
-		pool:       p,
-		indexinfos: iinfos,
-		feeds:      make(map[string]*Feed),
-	}
+    return &TapStreams{
+        pool:       p,
+        buckets:    make(map[string]*couchbase.Bucket),
+        feeds:      make(map[string]*couchbase.TapFeed),
+        eventch:    eventch,
+    }
 }
 
-func (streams *TapStreams) UpdateIndexInfos(iinfos []api.IndexInfo) {
-	streams.indexinfos = iinfos
+func (streams *TapStreams) OpenStreams(buckets []string) {
+    var bucket *couchbase.Bucket
+    var err error
+
+    for _, bname := range buckets {
+        if bucket, err = streams.pool.GetBucket(bname); err != nil {
+            panic(err)
+        }
+        streams.buckets[bname] = bucket
+        args := mc.TapArguments{
+            Dump:       false,
+            SupportAck: false,
+            KeysOnly:   false,
+            Checkpoint: true,
+            ClientName: "",
+        }
+        if tapfeed, err := bucket.StartTapFeed(&args); err == nil {
+            streams.feeds[bname] = tapfeed
+            go runFeed(streams, bname, tapfeed)
+        } else {
+            panic(err)
+        }
+    }
+    return
 }
 
-func (streams *TapStreams) OpenStreams() {
-	var bucket *couchbase.Bucket
-	var err error
-
-	for _, indexinfo := range streams.indexinfos {
-		if streams.feeds[indexinfo.Bucket] != nil {
-			continue
-		}
-		if bucket, err = streams.pool.GetBucket(indexinfo.Bucket); err != nil {
-			panic(err)
-		}
-		args := mc.TapArguments{
-			Dump:       false,
-			SupportAck: false,
-			KeysOnly:   false,
-			Checkpoint: true,
-			ClientName: "",
-		}
-		if tapfeed, err := bucket.StartTapFeed(&args); err != nil {
-			panic(err)
-		} else {
-			feed := &Feed{
-				streams:   streams,
-				bucket:    bucket,
-				tapfeed:   tapfeed,
-				indexinfo: &indexinfo,
-			}
-			streams.feeds[indexinfo.Bucket] = feed
-			go runFeed(feed)
-		}
-	}
-	return
-}
-
-func runFeed(feed *Feed) {
-	bucket := feed.indexinfo.Bucket
-	log.Println("feed for bucket", bucket, "...")
-	for {
-		if event, ok := <-feed.tapfeed.C; ok {
-			op := event.Opcode
-			if op == mc.TapMutation || op == mc.TapDeletion {
-				feed.streams.eventch <- &goupr.StreamEvent{
-					Bucket: bucket,
-					Opstr:  tapop2type[op],
-					Key:    event.Key,
-					Value:  event.Value,
-				}
-			}
-		} else {
-			log.Println("closing tap feed for", bucket)
-			break
-		}
-	}
+func runFeed(streams *TapStreams, b string, tapfeed *couchbase.TapFeed) {
+    log.Println("feed for bucket", b, "...")
+    for {
+        if event, ok := <-tapfeed.C; ok {
+            op := event.Opcode
+            if op == mc.TapMutation || op == mc.TapDeletion {
+                streams.eventch <- &goupr.StreamEvent{
+                    Bucket: b,
+                    Opstr:  tapop2type[op],
+                    Key:    event.Key,
+                    Value:  event.Value,
+                }
+            }
+        } else {
+            log.Println("Closing tap feed for", b)
+            break
+        }
+    }
 }
 
 func (streams *TapStreams) CloseStreams() {
-	for _, f := range streams.feeds {
-		f.bucket.Close()
-		f.tapfeed.Close()
-	}
+    log.Printf("Closing %v streams", len(streams.feeds))
+    for _, bucket := range streams.buckets {
+        bucket.Close()
+    }
+    for _, tapfeed := range streams.feeds {
+        tapfeed.Close()
+    }
 }
