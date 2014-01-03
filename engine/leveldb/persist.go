@@ -148,8 +148,13 @@ func (ldb *LevelDBEngine) DeleteMutation(docid string) error {
 }
 
 func (ldb *LevelDBEngine) Close() error {
+	//close the main index
 	if ldb.c != nil {
 		ldb.c.Close()
+	}
+	//close the back index
+	if ldb.b != nil {
+		ldb.b.Close()
 	}
 	return nil
 }
@@ -159,7 +164,12 @@ func (ldb *LevelDBEngine) Destroy() error {
 	if err = ldb.Close(); err != nil {
 		return err
 	}
+	//Destroy the main index
 	if err = levigo.DestroyDatabase(ldb.name, ldb.options); err != nil {
+		return err
+	}
+	//Destroy the back index
+	if err = levigo.DestroyDatabase(ldb.name+"_back", ldb.options); err != nil {
 		return err
 	}
 	return err
