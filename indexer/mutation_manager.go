@@ -1,9 +1,8 @@
 package main
 
 import (
-	"github.com/couchbaselabs/indexing/api"
-	//    "github.com/couchbaselabs/dparval"
 	"errors"
+	"github.com/couchbaselabs/indexing/api"
 	"log"
 	"net"
 	"net/rpc"
@@ -15,6 +14,11 @@ type MutationManager struct {
 }
 
 var mutationMgr MutationManager
+
+type ddlNotification struct {
+	indexinfo api.IndexInfo
+	ddltype   api.RequestType
+}
 
 func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *bool) error {
 	log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
@@ -73,11 +77,22 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 	return nil
 }
 
-func RegisterIndexWithMutationHandler(indexinfo api.IndexInfo) {
-	mutationMgr.indexmap[indexinfo.Uuid] = indexinfo.Engine
+func StartMutationManager() (chan ddlNotification, error) {
+
+	var err error
+	//start the rpc server
+	if err = startRPCServer(); err != nil {
+		return nil, err
+	}
+
+	//create a channel to receive notification from indexer
+	//and start a goroutine to listen to it
+	chnotify = make(chan ddlNotification)
+	go acceptIndexerNotification(chnotify)
+	return chnotify, nil
 }
 
-func StartMutationManager() error {
+func startRPCServer() error {
 
 	log.Println("Starting Mutation Manager")
 	server := rpc.NewServer()
@@ -86,18 +101,41 @@ func StartMutationManager() error {
 	server.HandleHTTP(rpc.DefaultRPCPath, rpc.DefaultDebugPath)
 	mutationMgr.indexmap = make(map[string]api.Finder)
 
-	l, e := net.Listen("tcp", ":8096")
-	if e != nil {
-		return e
+	l, err := net.Listen("tcp", ":8096")
+	if err != nil {
+		return err
 	}
 
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return err
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				log.Printf("Error in Accept %v. Shutting down")
+				//FIXME Add a cleanup function
+				return
+			}
+			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
 		}
-
-		go server.ServeCodec(jsonrpc.NewServerCodec(conn))
-	}
+	}()
 	return nil
+
+}
+
+func acceptIndexerNotification(chnotify chan ddlNotification) {
+
+	ok := true
+	var ddl ddlNotification
+	for ok {
+		ddl, ok = <-chnotify
+		if ok {
+			switch ddl.ddltype {
+			case api.CREATE:
+				mutationMgr.indexmap[ddl.indexinfo.Uuid] = ddl.indexinfo.Engine
+			case api.DROP:
+				delete(mutationMgr.indexmap, ddl.indexinfo.Uuid)
+			default:
+				log.Printf("Mutation Manager Received Unsupported Notification %v", ddl.ddltype)
+			}
+		}
+	}
 }
