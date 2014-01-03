@@ -9,15 +9,19 @@ import (
 )
 
 type UprStreams struct {
-    pool    couchbase.Pool
+    client  *couchbase.Client
+    pool    *couchbase.Pool
     buckets map[string]*couchbase.Bucket // [bucketname]*couchbase.Bucket
     // [bucketname]{hostname : *goupr.Client}
     clients map[string]map[string]*goupr.Client
     eventch chan *goupr.StreamEvent
 }
 
-func NewUprStreams(p couchbase.Pool, eventch chan *goupr.StreamEvent) *UprStreams {
+func NewUprStreams(c *couchbase.Client, p *couchbase.Pool, 
+    eventch chan *goupr.StreamEvent) *UprStreams {
+
     return &UprStreams{
+        client:  c,
         pool:    p,
         buckets: make(map[string]*couchbase.Bucket),
         clients: make(map[string]map[string]*goupr.Client),
@@ -27,6 +31,14 @@ func NewUprStreams(p couchbase.Pool, eventch chan *goupr.StreamEvent) *UprStream
 
 func (streams *UprStreams) OpenStreams(buckets []string) {
     var err error
+    var pool couchbase.Pool
+
+    pool, err = streams.client.GetPool("default")
+    if err != nil {
+        log.Println("ERROR: Unable to refresh the pool `default`")
+        return
+    }
+    streams.pool = &pool
     for _, bname := range buckets {
         b, _ := streams.pool.GetBucket(bname)
         streams.buckets[bname] = b

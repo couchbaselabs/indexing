@@ -8,7 +8,8 @@ import (
 )
 
 type TapStreams struct {
-    pool    couchbase.Pool
+    client  *couchbase.Client
+    pool    *couchbase.Pool
     buckets map[string]*couchbase.Bucket // [bucketname]*couchbase.Bucket
     feeds   map[string]*couchbase.TapFeed // [bucketname]*couchbase.TapFeed
     eventch chan *goupr.StreamEvent
@@ -19,10 +20,11 @@ var tapop2type = map[mc.TapOpcode]string{
     mc.TapDeletion: "DELETE",
 }
 
-func NewTapStreams(p couchbase.Pool, 
+func NewTapStreams(c *couchbase.Client, p *couchbase.Pool,
     eventch chan *goupr.StreamEvent) *TapStreams {
 
     return &TapStreams{
+        client:     c,
         pool:       p,
         buckets:    make(map[string]*couchbase.Bucket),
         feeds:      make(map[string]*couchbase.TapFeed),
@@ -32,11 +34,19 @@ func NewTapStreams(p couchbase.Pool,
 
 func (streams *TapStreams) OpenStreams(buckets []string) {
     var bucket *couchbase.Bucket
+    var pool couchbase.Pool
     var err error
 
+    pool, err = streams.client.GetPool("default")
+    if err != nil {
+        log.Println("ERROR: Unable to refresh the pool `default`")
+        return
+    }
+    streams.pool = &pool
     for _, bname := range buckets {
         if bucket, err = streams.pool.GetBucket(bname); err != nil {
-            panic(err)
+            log.Println("ERROR: failed to get bucket", bname, "err:", err)
+            break
         }
         streams.buckets[bname] = bucket
         args := mc.TapArguments{
@@ -50,7 +60,8 @@ func (streams *TapStreams) OpenStreams(buckets []string) {
             streams.feeds[bname] = tapfeed
             go runFeed(streams, bname, tapfeed)
         } else {
-            panic(err)
+            log.Println("ERROR: failed to get feed for bucket", bname, "err:", err)
+            break
         }
     }
     return

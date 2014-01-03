@@ -65,23 +65,6 @@ func main() {
     imanager := imclient.NewRestClient(imURL)
     // nodes := imanager.Nodes()
 
-    // Start pumping user mutations if user-production file is available
-    if options.userProd != "" {
-        if users, err := pool.GetBucket("users"); err == nil {
-            go populateUsers(users)
-        } else {
-            panic("Unable to get-bucket `users`")
-        }
-    }
-    // Start pumping projects mutations if user-production file is available
-    if options.projProd != "" {
-        if projects, err := pool.GetBucket("projects"); err == nil {
-            go populateProjects(projects)
-        } else {
-            panic("Unable to get-bucket `users`")
-        }
-    }
-
     rpcconn, err := net.Dial("tcp", "localhost:8096")
     if err != nil {
         panic(err)
@@ -93,18 +76,18 @@ func main() {
     var streams Streamer
     switch options.proto {
     case "tap":
-        streams = NewTapStreams(pool, eventch)
+        streams = NewTapStreams(&couch, &pool, eventch)
     case "upr":
-        streams = NewUprStreams(pool, eventch)
+        streams = NewUprStreams(&couch, &pool, eventch)
     }
 
     for {
         serverUuid, indexinfos, err := imanager.List("")
-        log.Println(indexinfos)
-        streams.OpenStreams(indexBuckets(indexinfos))
         if err != nil {
-            panic(err)
+            log.Println(err)
+            continue
         }
+        streams.OpenStreams(indexBuckets(indexinfos))
         bucketexprs := parseExpression(indexinfos)
         notifych := make(chan string, 1)
         go waitNotify(imanager, serverUuid, notifych)
@@ -124,6 +107,7 @@ Loop:
             log.Println("Notification received, serverUuid:", serverUuid)
             break Loop
         case sevent := <-eventch:
+            log.Println(string(sevent.Key), string(sevent.Value))
             for indexinfo, astexprs := range bucketexprs {
                 bucket, idxuuid := indexinfo.Bucket, indexinfo.Uuid
                 if sevent.Bucket != bucket {
