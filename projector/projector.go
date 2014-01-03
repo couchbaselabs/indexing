@@ -142,17 +142,17 @@ Loop:
 					Docid:   string(sevent.Key),
 				}
 				if indexinfo.IsPrimary {
-					m.Value = sevent.Value
+					m.SecondaryKey = [][]byte{sevent.Key}
 				} else {
 					m.SecondaryKey = evaluate(sevent.Value, astexprs)
 				}
 				log.Println("mutation recevied", sevent.Opstr, idxuuid, bucket, m.Docid,
 					m.SecondaryKey)
-				//var r bool
-				//err := c.Call("MutationManager.ProcessSingleMutation", m, &r)
-				//if err != nil {
-				//    log.Fatal("Mutation error:", err)
-				//}
+				var r bool
+				err := c.Call("MutationManager.ProcessSingleMutation", m, &r)
+				if err != nil {
+					log.Fatal("Mutation error:", err)
+				}
 			}
 		}
 	}
