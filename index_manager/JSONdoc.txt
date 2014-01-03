@@ -1,0 +1,10 @@
+{
+    "Processes": [
+        { "Name" : "date",
+          "Path" : "./",
+          "Cmdargs" : ["-d"],
+          "Env"  : [""]
+        }
+    ]
+}
+
