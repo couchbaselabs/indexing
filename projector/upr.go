@@ -105,7 +105,7 @@ func openFeed(b *couchbase.Bucket, nodes map[string]*goupr.Client,
 	high, start, end := uint64(0), uint64(0), uint64(0xFFFFFFFFFFFFFFF)
 	stream, _, err := client.UprStream(req, flags, start, end, vuuid, high)
 	if err != nil {
-		log.Println("Error opening feed for vbucket", vb, err)
+		log.Println("Error opening feed for %v:%v : %v", b.Name, vb, err)
 	} else {
 		log.Printf("Opened feed for %v:%v", b.Name, vb)
 		stream.AutoRestart(true)
