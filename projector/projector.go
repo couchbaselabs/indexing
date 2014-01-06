@@ -83,6 +83,7 @@ func main() {
 
 	for {
 		serverUuid, indexinfos, err := imanager.List("")
+		log.Printf("Got %v indexes", len(indexinfos))
 		if err != nil {
 			log.Println(err)
 			continue
@@ -117,9 +118,9 @@ Loop:
 					Indexid: idxuuid,
 					Docid:   string(sevent.Key),
 				}
-				if indexinfo.IsPrimary {
+				if indexinfo.IsPrimary && seven.Opstr == "INSERT" {
 					m.SecondaryKey = [][]byte{sevent.Key}
-				} else {
+				} else if seven.Opstr == "INSERT" {
 					m.SecondaryKey = evaluate(sevent.Value, astexprs)
 				}
 				log.Println("mutation recevied", sevent.Opstr, idxuuid, bucket,
