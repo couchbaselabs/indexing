@@ -118,9 +118,9 @@ Loop:
 					Indexid: idxuuid,
 					Docid:   string(sevent.Key),
 				}
-				if indexinfo.IsPrimary && seven.Opstr == "INSERT" {
+				if indexinfo.IsPrimary && sevent.Opstr == "INSERT" {
 					m.SecondaryKey = [][]byte{sevent.Key}
-				} else if seven.Opstr == "INSERT" {
+				} else if sevent.Opstr == "INSERT" {
 					m.SecondaryKey = evaluate(sevent.Value, astexprs)
 				}
 				log.Println("mutation recevied", sevent.Opstr, idxuuid, bucket,
@@ -128,7 +128,7 @@ Loop:
 				var r bool
 				err := c.Call("MutationManager.ProcessSingleMutation", m, &r)
 				if err != nil {
-					log.Fatal("Mutation error:", err)
+					log.Println("ERROR: Mutation manager:", err)
 				}
 			}
 		}
@@ -151,7 +151,7 @@ func evaluate(value []byte, astexprs []ast.Expression) [][]byte {
 
 func parseExpression(indexinfos []api.IndexInfo) map[*api.IndexInfo][]ast.Expression {
 	bucketexprs := make(map[*api.IndexInfo][]ast.Expression)
-	for _, indexinfo := range indexinfos {
+	for i, indexinfo := range indexinfos {
 		astexprs := make([]ast.Expression, 0)
 		for _, expr := range indexinfo.OnExprList {
 			if ex, err := ast.UnmarshalExpression([]byte(expr)); err == nil {
@@ -160,7 +160,7 @@ func parseExpression(indexinfos []api.IndexInfo) map[*api.IndexInfo][]ast.Expres
 				panic(err)
 			}
 		}
-		bucketexprs[&indexinfo] = astexprs
+		bucketexprs[&indexinfos[i]] = astexprs
 	}
 	return bucketexprs
 }
@@ -174,11 +174,17 @@ func waitNotify(imanager *imclient.RestClient, serverUuid string, notifych chan 
 }
 
 func indexBuckets(indexinfos []api.IndexInfo) []string {
-	buckets := make([]string, 0)
+	buckets := make(map[string]bool)
 	for _, indexinfo := range indexinfos {
-		buckets = append(buckets, indexinfo.Bucket)
+		if buckets[indexinfo.Bucket] == false {
+			buckets[indexinfo.Bucket] = true
+		}
 	}
-	return buckets
+	uniquebuckets := make([]string, 0)
+	for bucket, _ := range buckets {
+		uniquebuckets = append(uniquebuckets, bucket)
+	}
+	return uniquebuckets
 }
 
 func fmtSKey(keys [][]byte) []string {

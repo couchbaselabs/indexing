@@ -5,7 +5,8 @@ import (
 	"github.com/couchbaselabs/go-couchbase"
 	"github.com/prataprc/goupr"
 	"log"
-	"strings"
+	//"strings"
+	"time"
 )
 
 type UprStreams struct {
@@ -41,6 +42,7 @@ func (streams *UprStreams) OpenStreams(buckets []string) {
 	}
 	streams.pool = &pool
 
+	log.Println("Opening streams for buckets", buckets)
 	for _, bname := range buckets {
 		b, _ := streams.pool.GetBucket(bname)
 		streams.buckets[bname] = b
@@ -79,7 +81,9 @@ func (streams *UprStreams) connectNodes(
 	nodes := make(map[string]*goupr.Client)
 	for _, hostname := range servers {
 		client := goupr.NewClient(bucket, streams.eventch)
-		name := strings.Join([]string{"indexer", bucket.Name, hostname}, "/")
+		// TODO: Switch this one we have repeat backfile enabled from the server side
+		name := fmt.Sprintf("%v", time.Now().UnixNano())
+		//name := strings.Join([]string{"indexer", bucket.Name, hostname}, "/")
 		if err := client.Connect(hostname, name, false); err != nil {
 			return nil, fmt.Errorf("Not able to connect with %v: %v", name, err)
 		} else {
