@@ -20,6 +20,7 @@ import (
 var c catalog.IndexCatalog
 var ddlLock sync.Mutex
 var chnotify chan ddlNotification
+var engineMap map[string]api.Finder
 
 func main() {
 	var err error
@@ -29,7 +30,15 @@ func main() {
 		log.Fatalf("Fatal error opening catalog: %v", err)
 	}
 
+	engineMap = make(map[string]api.Finder)
+	//open engine for existing indexes and assign to engineMap
 	openIndexEngine()
+
+	//FIXME add error handing to this
+	if chnotify, err = StartMutationManager(engineMap); err != nil {
+		log.Printf("Error Starting Mutation Manager %v", err)
+		return
+	}
 
 	addr := ":8095"
 	// Subscribe to HTTP server handlers
@@ -37,13 +46,6 @@ func main() {
 	http.HandleFunc("/drop", handleDrop)
 	http.HandleFunc("/scan", handleScan)
 	http.HandleFunc("/stats", handleStats)
-
-	//FIXME add error handing to this
-
-	if chnotify, err = StartMutationManager(); err != nil {
-		log.Printf("Error Starting Mutation Manager %v", err)
-		return
-	}
 
 	//FIXME This doesn't work on Ctrl-C
 	defer freeResourcesOnExit()
@@ -69,6 +71,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 			//notify mutation manager about the new index
 			notification := ddlNotification{
 				ddltype:   api.CREATE,
+				engine:    engineMap[indexinfo.Uuid],
 				indexinfo: indexinfo,
 			}
 			chnotify <- notification
@@ -100,11 +103,12 @@ func handleDrop(w http.ResponseWriter, r *http.Request) {
 		//Notify mutation manager before destroying the engine
 		notification := ddlNotification{
 			ddltype:   api.DROP,
+			engine:    engineMap[indexinfo.Uuid],
 			indexinfo: indexinfo,
 		}
 		chnotify <- notification
 
-		if err = indexinfo.Engine.Destroy(); err == nil {
+		if err = engineMap[indexinfo.Uuid].Destroy(); err == nil {
 			if _, err = c.Drop(indexinfo.Uuid); err == nil {
 				res = api.IndexMetaResponse{
 					Status: api.SUCCESS,
@@ -188,7 +192,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 
 // /stats.
 func handleStats(w http.ResponseWriter, r *http.Request) {
-	panic("Not yet impleted")
+	panic("Not yet implemented")
 }
 
 //---- helper functions
@@ -196,7 +200,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 func countQuery(indexinfo *api.IndexInfo, limit int64) (
 	uint64, error) {
 
-	if counter, ok := indexinfo.Engine.(api.Counter); ok {
+	if counter, ok := engineMap[indexinfo.Uuid].(api.Counter); ok {
 		count, err := counter.CountTotal()
 		return count, err
 	}
@@ -206,7 +210,7 @@ func countQuery(indexinfo *api.IndexInfo, limit int64) (
 
 func existsQuery(indexinfo *api.IndexInfo, key api.Key) (bool, error) {
 
-	if exister, ok := indexinfo.Engine.(api.Exister); ok {
+	if exister, ok := engineMap[indexinfo.Uuid].(api.Exister); ok {
 		exists := exister.Exists(key)
 		return exists, nil
 	}
@@ -217,7 +221,7 @@ func existsQuery(indexinfo *api.IndexInfo, key api.Key) (bool, error) {
 func scanQuery(indexinfo *api.IndexInfo, limit int64) (
 	[]api.IndexRow, error) {
 
-	if looker, ok := indexinfo.Engine.(api.Looker); ok {
+	if looker, ok := engineMap[indexinfo.Uuid].(api.Looker); ok {
 		ch, cherr := looker.ValueSet()
 		return receiveValue(ch, cherr, limit)
 	}
@@ -229,7 +233,7 @@ func rangeQuery(
 	indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion,
 	limit int64) ([]api.IndexRow, error) {
 
-	if ranger, ok := indexinfo.Engine.(api.Ranger); ok {
+	if ranger, ok := engineMap[indexinfo.Uuid].(api.Ranger); ok {
 		ch, cherr, _ := ranger.ValueRange(low, high, incl)
 		return receiveValue(ch, cherr, limit)
 	}
@@ -240,7 +244,7 @@ func rangeQuery(
 func lookupQuery(indexinfo *api.IndexInfo, key api.Key, limit int64) (
 	[]api.IndexRow, error) {
 
-	if looker, ok := indexinfo.Engine.(api.Looker); ok {
+	if looker, ok := engineMap[indexinfo.Uuid].(api.Looker); ok {
 		log.Printf("Looking up key %s", key.String())
 		ch, cherr := looker.Lookup(key)
 		return receiveValue(ch, cherr, limit)
@@ -253,7 +257,7 @@ func rangeCountQuery(
 	indexinfo *api.IndexInfo, low, high api.Key, incl api.Inclusion,
 	limit int64) (uint64, error) {
 
-	if rangeCounter, ok := indexinfo.Engine.(api.RangeCounter); ok {
+	if rangeCounter, ok := engineMap[indexinfo.Uuid].(api.RangeCounter); ok {
 		totalRows, err := rangeCounter.CountRange(low, high, incl)
 		return totalRows, err
 	}
@@ -350,10 +354,9 @@ func createMetaResponseFromError(err error) api.IndexMetaResponse {
 // Instantiate index engine
 func assignIndexEngine(indexinfo *api.IndexInfo) error {
 	var err error
-	indexinfo.Engine = nil
 	switch indexinfo.Using {
 	case api.LevelDB:
-		indexinfo.Engine = leveldb.NewIndexEngine(indexinfo.Uuid)
+		engineMap[indexinfo.Uuid] = leveldb.NewIndexEngine(indexinfo.Uuid)
 	default:
 		err = errors.New(fmt.Sprintf("Invalid index-type, `%v`", indexinfo.Using))
 	}
@@ -374,7 +377,7 @@ func openIndexEngine() error {
 		log.Printf("Try Finding Existing Engine for Index %v", indexinfo)
 		switch indexinfo.Using {
 		case api.LevelDB:
-			indexinfo.Engine = leveldb.OpenIndexEngine(indexinfo.Uuid)
+			engineMap[indexinfo.Uuid] = leveldb.OpenIndexEngine(indexinfo.Uuid)
 			log.Printf("Got Existing Engine for Index %v", indexinfo.Uuid)
 		default:
 			err = errors.New(fmt.Sprintf("Unknown Index Type. Skipping Opening Engine"))
@@ -406,7 +409,7 @@ func closeIndexEngines() error {
 	if _, indexinfos, err := c.List(""); err == nil {
 
 		for _, indexinfo := range indexinfos {
-			if err := indexinfo.Engine.Close(); err != nil {
+			if err := engineMap[indexinfo.Uuid].Close(); err != nil {
 				return err
 			}
 		}
