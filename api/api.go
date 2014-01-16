@@ -65,7 +65,7 @@ type IndexInfo struct {
 	Bucket     string    `json:"bucket,omitempty"`     // bucket name
 	IsPrimary  bool      `json:"isPrimary,omitempty"`
 	Exprtype   ExprType  `json:"exprType,omitempty"`
-	Engine     Finder    `json:"engine,omitempty"` // instance of index algorithm.
+	//	Engine     Finder    `json:"engine,omitempty"` // instance of index algorithm.
 }
 
 // Accuracy characterizes if the results of the index is subject to probabilistic errors.
@@ -126,8 +126,8 @@ type Value struct {
 type valuedata struct {
 	Keybytes Keybytes
 	Docid    string
-	Vbucket  int
-	Seqno    int64
+	Vbucket  uint
+	Seqno    uint64
 }
 
 type Keybytes [][]byte
@@ -136,6 +136,12 @@ type Persister interface {
 
 	//Persist a key/value pair
 	InsertMutation(key Key, value Value) error
+
+	//Persist meta key/value in back index
+	InsertMeta(metaid string, metavalue string) error
+
+	//Return meta value based on metaid from back index
+	GetMeta(metaid string) (string, error)
 
 	//Delete a key/value pair by docId
 	DeleteMutation(docid string) error
@@ -204,6 +210,15 @@ type Mutation struct {
 	Indexid      string
 	SecondaryKey [][]byte
 	Docid        string
-	Vbucket      int
-	Seqno        int64
+	Vbucket      uint
+	Seqno        uint64
 }
+
+//list of index UUIDs
+type IndexList []string
+
+//sequence number for each of 1024 vbuckets
+type SequenceVector [1024]uint64
+
+//map of <Index, SequenceVector>
+type IndexSequenceMap map[string]SequenceVector
