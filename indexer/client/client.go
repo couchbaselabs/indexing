@@ -65,7 +65,7 @@ func main() {
 		insert.SecondaryKey = append(insert.SecondaryKey, val.Bytes())
 	}
 
-	conn, err := net.Dial("tcp", "localhost:8222")
+	conn, err := net.Dial("tcp", "localhost:8096")
 
 	if err != nil {
 		panic(err)
