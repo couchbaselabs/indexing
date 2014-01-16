@@ -89,6 +89,7 @@ func (ldb *LevelDBEngine) InsertMutation(k api.Key, v api.Value) error {
 			return err
 		}
 	}
+	//FIXME : Handle the case if old-value from backindex matches with the new-value(false mutation). Skip It.
 
 	//set in main index
 	if err = ldb.c.Put(ldb.wo, k.EncodedBytes(), v.EncodedBytes()); err != nil {
@@ -101,6 +102,31 @@ func (ldb *LevelDBEngine) InsertMutation(k api.Key, v api.Value) error {
 	}
 
 	return err
+}
+
+func (ldb *LevelDBEngine) InsertMeta(metaid string, metavalue string) error {
+
+	log.Printf("LevelDB Set Meta Key - %s, Value - %s", metaid, metavalue)
+	var err error
+
+	//meta values go to the back index
+	if err = ldb.b.Put(ldb.wo, []byte(metaid), []byte(metavalue)); err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (ldb *LevelDBEngine) GetMeta(metaid string) (string, error) {
+
+	var metavalue []byte
+	var err error
+	if metavalue, err = ldb.b.Get(ldb.ro, []byte(metaid)); err == nil {
+		log.Printf("LevelDB Get Meta Key - %s, Value - %s", metaid, string(metavalue))
+		return string(metavalue), nil
+	}
+
+	return "", err
 }
 
 func (ldb *LevelDBEngine) GetBackIndexEntry(docid string) (api.Key, error) {
