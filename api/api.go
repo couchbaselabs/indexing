@@ -9,6 +9,8 @@ package api
 // Known index types
 type IndexType string
 
+type UprEventName string
+
 const (
 	View    IndexType = "view"
 	Llrb              = "llrb"
@@ -18,6 +20,13 @@ const (
 	RBTree            = "rbtree"
 	CBTree            = "cbtree"
 )
+
+const (
+	INSERT UprEventName = "UPR_MUTATION"
+	DELETE              = "UPR_DELETION"
+)
+
+const MAX_VBUCKETS = 1024
 
 // Inclusion controls how the boundaries values of a range are treated
 type Inclusion int
@@ -65,7 +74,7 @@ type IndexInfo struct {
 	Bucket     string    `json:"bucket,omitempty"`     // bucket name
 	IsPrimary  bool      `json:"isPrimary,omitempty"`
 	Exprtype   ExprType  `json:"exprType,omitempty"`
-	//	Engine     Finder    `json:"engine,omitempty"` // instance of index algorithm.
+	//  Engine     Finder    `json:"engine,omitempty"` // instance of index algorithm.
 }
 
 // Accuracy characterizes if the results of the index is subject to probabilistic errors.
@@ -126,7 +135,7 @@ type Value struct {
 type valuedata struct {
 	Keybytes Keybytes
 	Docid    string
-	Vbucket  uint
+	Vbucket  uint16
 	Seqno    uint64
 }
 
@@ -206,11 +215,11 @@ type RangeCounter interface {
 
 // Mutations from projector to indexer.
 type Mutation struct {
-	Type         string
+	Type         UprEventName
 	Indexid      string
 	SecondaryKey [][]byte
 	Docid        string
-	Vbucket      uint
+	Vbucket      uint16
 	Seqno        uint64
 }
 
@@ -218,7 +227,7 @@ type Mutation struct {
 type IndexList []string
 
 //sequence number for each of 1024 vbuckets
-type SequenceVector [1024]uint64
+type SequenceVector [MAX_VBUCKETS]uint64
 
 //map of <Index, SequenceVector>
-type IndexSequenceMap map[string]SequenceVector
+type IndexSequenceMap map[string]SequenceVector // indexed with index-uuid

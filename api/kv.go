@@ -40,7 +40,7 @@ func NewKey(data [][]byte, docid string) (Key, error) {
 
 }
 
-func NewValue(data [][]byte, docid string, vbucket uint, seqno uint64) (Value, error) {
+func NewValue(data [][]byte, docid string, vbucket uint16, seqno uint64) (Value, error) {
 
 	var val Value
 
