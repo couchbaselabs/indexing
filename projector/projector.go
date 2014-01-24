@@ -14,7 +14,12 @@ import (
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"strconv"
+	"time"
 )
+
+// exponential backoff while connection retry.
+const initialRetryInterval = 1 * time.Second
+const maximumRetryInterval = 30 * time.Second
 
 var options struct {
 	kvhost   string
@@ -90,12 +95,17 @@ func main() {
 		streams = NewUprStreams(&couch, &pool, eventch)
 	}
 
+	var serverUuid string
+	var indexinfos []api.IndexInfo
 	for {
-		serverUuid, indexinfos, err := imanager.List("")
-		if err != nil {
-			log.Println(err)
-			continue
-		}
+		tryIndexManager(func() bool {
+			serverUuid, indexinfos, err = imanager.List("")
+			if err != nil {
+				log.Println(err)
+				return false
+			}
+			return true
+		})
 		log.Printf("Got %v indexes", len(indexinfos))
 		bucketMap := getSequenceVectors(c, indexinfos)
 		streams.OpenStreams(indexBuckets(indexinfos), bucketMap)
@@ -114,8 +124,10 @@ func loop(c *rpc.Client, notifych chan string, eventch chan *goupr.UprEvent,
 Loop:
 	for {
 		select {
-		case serverUuid := <-notifych:
-			log.Println("Notification received, serverUuid:", serverUuid)
+		case serverUuid, ok := <-notifych:
+			if ok {
+				log.Println("Notification received, serverUuid:", serverUuid)
+			}
 			break Loop
 		case e := <-eventch:
 			for indexinfo, astexprs := range bucketexprs {
@@ -177,9 +189,25 @@ func parseExpression(indexinfos []api.IndexInfo) map[*api.IndexInfo][]ast.Expres
 	return bucketexprs
 }
 
+func tryIndexManager(fn func() bool) {
+	retryInterval := initialRetryInterval
+	for {
+		ok := fn()
+		if ok {
+			return
+		}
+		log.Printf("Retrying after %v seconds ...\n", retryInterval)
+		<-time.After(retryInterval)
+		if retryInterval *= 2; retryInterval > maximumRetryInterval {
+			retryInterval = maximumRetryInterval
+		}
+	}
+}
+
 func waitNotify(imanager *imclient.RestClient, serverUuid string, notifych chan string) {
 	if _, serverUuid, err := imanager.Notify(serverUuid); err != nil {
-		panic(err)
+		log.Println("Index manager closed connection:", err)
+		close(notifych)
 	} else {
 		notifych <- serverUuid
 	}
