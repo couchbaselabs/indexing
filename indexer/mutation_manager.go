@@ -28,13 +28,13 @@ type seqNotification struct {
 	engine  api.Finder
 	indexid string
 	seqno   uint64
-	vbucket uint
+	vbucket uint16
 }
 
 var chseq chan seqNotification
 
 //This function returns a map of <Index, SequenceVector> based on the IndexList received in request
-func (m *MutationManager) GetSequenceVector(indexList api.IndexList, reply *api.IndexSequenceMap) error {
+func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api.IndexSequenceMap) error {
 
 	//if indexList is nil, return the complete map
 	if len(indexList) == 0 {
@@ -67,7 +67,7 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 	//FIXME change this to channel based
 	*reply = false
 
-	if mutation.Type == "INSERT" {
+	if mutation.Type == api.INSERT {
 
 		var key api.Key
 		var value api.Value
@@ -106,7 +106,7 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 
 		*reply = true
 
-	} else if mutation.Type == "DELETE" {
+	} else if mutation.Type == api.DELETE {
 
 		if engine, ok := m.enginemap[mutation.Indexid]; ok {
 			if err := engine.DeleteMutation(mutation.Docid); err != nil {
@@ -145,7 +145,7 @@ func StartMutationManager(engineMap map[string]api.Finder) (chan ddlNotification
 
 	//create channel to receive notification for new sequence numbers
 	//and start a goroutine to manage it
-	chseq = make(chan seqNotification, 1024)
+	chseq = make(chan seqNotification, api.MAX_VBUCKETS)
 	go mutationMgr.manageSeqNotification(chseq)
 
 	//create a channel to receive notification from indexer
