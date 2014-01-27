@@ -142,9 +142,9 @@ Loop:
 					Vbucket: e.Vbucket,
 					Seqno:   e.Seqno,
 				}
-				if indexinfo.IsPrimary && e.Opstr == api.INSERT {
+				if indexinfo.IsPrimary && m.Type == api.INSERT {
 					m.SecondaryKey = [][]byte{e.Key}
-				} else if e.Opstr == api.INSERT {
+				} else if m.Type == api.INSERT {
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
 				log.Println("mutation recevied", e.Opstr, idxuuid, bucket,
