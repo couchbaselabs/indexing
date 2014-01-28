@@ -15,6 +15,7 @@ type UprStreams struct {
 	buckets map[string]*couchbase.Bucket // [bucketname]*couchbase.Bucket
 	feeds   map[string]*goupr.UprFeed
 	eventch chan *goupr.UprEvent
+	quit    chan bool
 }
 
 func NewUprStreams(c *couchbase.Client, p *couchbase.Pool,
@@ -26,32 +27,36 @@ func NewUprStreams(c *couchbase.Client, p *couchbase.Pool,
 		buckets: make(map[string]*couchbase.Bucket),
 		feeds:   make(map[string]*goupr.UprFeed),
 		eventch: eventch,
+		quit:    make(chan bool),
 	}
 }
 
-func (streams *UprStreams) OpenStreams(buckets []string,
-	bucketMap BucketVBVector) {
-
-	var err error
+func (streams *UprStreams) openStreams(bvb map[string][]uint64) (err error) {
 	var pool couchbase.Pool
+	var b *couchbase.Bucket
+	var flogs []goupr.FailoverLog
+	var feed *goupr.UprFeed
 
 	// Refresh the pool to get any new buckets created on the server.
 	pool, err = streams.client.GetPool("default")
 	if err != nil {
-		log.Println("ERROR: Unable to refresh the pool `default`")
 		return
 	}
 	streams.pool = &pool
 
-	for _, bname := range buckets {
+	for bname, seqVector := range bvb {
 		log.Println("Opening streams for bucket", bname)
-		b, _ := streams.pool.GetBucket(bname)
+		if b, err = streams.pool.GetBucket(bname); err != nil {
+			break
+		}
 		streams.buckets[bname] = b
-
 		name := fmt.Sprintf("%v", time.Now().UnixNano())
-		feed, err := goupr.StartUprFeed(b, name, nil)
-		if err != nil {
-			log.Println(err)
+		if flogs, err = goupr.GetFailoverLogs(b, name); err != nil {
+			break
+		}
+		uprstreams := makeUprStream(seqVector, flogs)
+		if feed, err = goupr.StartUprFeed(b, name, uprstreams); err != nil {
+			break
 		}
 		streams.feeds[bname] = feed
 		go streams.getEvents(b, feed)
@@ -60,20 +65,42 @@ func (streams *UprStreams) OpenStreams(buckets []string,
 }
 
 func (streams *UprStreams) getEvents(b *couchbase.Bucket, feed *goupr.UprFeed) {
+loop:
 	for {
-		e, ok := <-feed.C
-		if ok {
-			streams.eventch <- &e
-		} else {
-			return
+		select {
+		case e, ok := <-feed.C:
+			if ok {
+				streams.eventch <- &e
+			} else {
+				break loop
+			}
+		case <-streams.quit:
+			break loop
 		}
 	}
+	close(streams.eventch)
 }
 
-func (streams *UprStreams) CloseStreams() {
+func (streams *UprStreams) closeStreams() {
 	log.Println("Closing feeds ...")
+	close(streams.quit)
 	for bname, bucket := range streams.buckets {
 		bucket.Close()
 		streams.feeds[bname].Close()
 	}
+}
+
+func makeUprStream(seqVector []uint64, flogs []goupr.FailoverLog) map[uint16]*goupr.UprStream {
+	uprstreams := make(map[uint16]*goupr.UprStream)
+	for vbno, flog := range flogs {
+		vb := uint16(vbno)
+		uprstream := &goupr.UprStream{
+			Vbucket:  vb,
+			Vuuid:    flog[0][0],
+			Startseq: seqVector[vb],
+			Endseq:   0xFFFFFFFFFFFFFFFF,
+		}
+		uprstreams[vb] = uprstream
+	}
+	return uprstreams
 }

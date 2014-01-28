@@ -8,64 +8,65 @@ import (
 	imclient "github.com/couchbaselabs/indexing/index_manager/client"
 	ast "github.com/couchbaselabs/tuqtng/ast"
 	"github.com/prataprc/goupr"
-	//memcached "github.com/dustin/gomemcached"
 	"log"
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
-	"strconv"
 	"time"
 )
+
+// TODO:
+// [1] the node in which router runs will have to be mentioned in indexinfo
+//     structure. once that is available change the projector accordingly
 
 // exponential backoff while connection retry.
 const initialRetryInterval = 1 * time.Second
 const maximumRetryInterval = 30 * time.Second
+const maxOutstandingDone = 10000
+
+const (
+	GETSEQUENCE_VECTOR string = "MutationManager.GetSequenceVectors"
+	PROCESS_1MUTATION  string = "MutationManager.ProcessSingleMutation"
+)
 
 var options struct {
-	kvhost   string
-	imhost   string
-	inhost   string
-	port     int
-	userProd string
-	projProd string
-	seed     int
-	count    int
-	proto    string
+	kvhost string
+	imhost string
+	inhost string // TODO: [1]
+	count  int
+	proto  string
 }
 
-// BucketVBVector maps bucket to a 2 dimensional array of
-// [[vbcuket0, startSeq], [vbcuket1, startSeq], ..., [api.MAX_VBUCKETS, seq]]
-type BucketVBVector map[string][]uint64
+type streamer interface {
+	openStreams(map[string][]uint64 /*bucket sequence*/) error
+	closeStreams()
+}
+
+type projectorInfo struct {
+	serverUuid  string
+	imanager    *imclient.RestClient
+	indexinfos  map[string]*api.IndexInfo // uuid is the index key
+	indexers    map[string]*rpc.Client    // uuid is the index key
+	bvb         map[string][]uint64       // bucket-name is the index key
+	expressions map[string][]ast.Expression
+}
 
 func argParse() {
-	flag.StringVar(&options.kvhost, "kvhost", "localhost", "Port to connect")
-	flag.StringVar(&options.imhost, "imhost", "localhost", "Port to connect")
-	flag.StringVar(&options.inhost, "inhost", "localhost", "Port to connect")
-	flag.IntVar(&options.port, "port", 11211, "Host to connect")
-	flag.StringVar(&options.userProd, "userProd", "", "monster production for users")
-	flag.StringVar(&options.projProd, "projProd", "", "monster production for project")
-	flag.IntVar(&options.seed, "seed", 100, "seed for production")
-	flag.IntVar(&options.count, "count", 10, "number of documents to generate")
-	flag.StringVar(&options.proto, "proto", "tap", "Use either `tap` or `upr`")
+	flag.StringVar(&options.kvhost, "kvhost", "localhost:11211",
+		"Port to connect to kv-cluster")
+	flag.StringVar(&options.inhost, "inhost", "localhost:8096",
+		"Port to connect to indexer node") // TODO [1]
+	flag.StringVar(&options.imhost, "imhost", "localhost:8094",
+		"Port to connect to index-manager node")
+	flag.StringVar(&options.proto, "proto", "upr",
+		"Use either `tap` or `upr`")
 	flag.Parse()
-}
-
-type Streamer interface {
-	OpenStreams([]string, BucketVBVector)
-	CloseStreams()
 }
 
 func main() {
 	argParse()
-
-	//mcdport := int(8091)
-	//if options.port == 11212 {
-	//    mcdport = 12000
-	//}
-
 	// Couchbase client, pool and default bucket
-	url := "http://" + options.kvhost + ":" + strconv.Itoa(options.port)
-	couch, err := couchbase.Connect(url)
+	couch, err := couchbase.Connect("http://" + options.kvhost)
 	if err != nil {
 		log.Fatalf("Error connecting:  %v", err)
 	}
@@ -74,64 +75,130 @@ func main() {
 		log.Fatalf("Error getting pool:  %v", err)
 	}
 
-	imURL := "http://" + options.imhost + ":" + strconv.Itoa(8094)
-	imanager := imclient.NewRestClient(imURL)
-	// nodes := imanager.Nodes()
-
-	inURL := options.imhost + ":" + strconv.Itoa(8096)
-	rpcconn, err := net.Dial("tcp", inURL)
-	if err != nil {
-		panic(err)
-	}
-	defer rpcconn.Close()
-	c := jsonrpc.NewClient(rpcconn)
-
 	eventch := make(chan *goupr.UprEvent)
-	var streams Streamer
-	switch options.proto {
-	//case "tap":
-	//    streams = NewTapStreams(&couch, &pool, eventch)
-	case "upr":
-		streams = NewUprStreams(&couch, &pool, eventch)
-	}
+	streams := NewUprStreams(&couch, &pool, eventch)
 
-	var serverUuid string
-	var indexinfos []api.IndexInfo
 	for {
-		tryIndexManager(func() bool {
-			serverUuid, indexinfos, err = imanager.List("")
-			if err != nil {
-				log.Println(err)
-				return false
-			}
-			return true
-		})
-		log.Printf("Got %v indexes", len(indexinfos))
-		bucketMap := getSequenceVectors(c, indexinfos)
-		streams.OpenStreams(indexBuckets(indexinfos), bucketMap)
-		bucketexprs := parseExpression(indexinfos)
-		notifych := make(chan string, 1)
-		go waitNotify(imanager, serverUuid, notifych)
-		loop(c, notifych, eventch, bucketexprs)
-		streams.CloseStreams()
+		p := &projectorInfo{}
+		p.getMetaData()
+		if err := streams.openStreams(p.bvb); err == nil {
+			notifych := make(chan string, 1)
+			go p.waitNotify(notifych)
+			p.loop(notifych, eventch)
+			streams.closeStreams()
+			p.close()
+		} else {
+			log.Println("Error openStreams():", err)
+		}
 		log.Println("Projector restarting ...")
 	}
 }
 
-func loop(c *rpc.Client, notifych chan string, eventch chan *goupr.UprEvent,
-	bucketexprs map[*api.IndexInfo][]ast.Expression) {
+func (p *projectorInfo) getMetaData() (err error) {
+	var rpcconn net.Conn
+	var returnMap api.IndexSequenceMap
+	var indexinfos []api.IndexInfo
+	var ex ast.Expression
 
-Loop:
+	tryConnection(func() bool {
+		p.imanager = imclient.NewRestClient("http://" + options.imhost)
+		if p.serverUuid, indexinfos, err = p.imanager.List(""); err != nil {
+			log.Println("Error getting list:", err)
+			return false
+		}
+		// Create a map of indexinfos
+		p.indexinfos = make(map[string]*api.IndexInfo)
+		for i, ii := range indexinfos {
+			p.indexinfos[ii.Uuid] = &indexinfos[i]
+		}
+		// Create a map of indexer clients
+		p.indexers = make(map[string]*rpc.Client)
+		p.bvb = make(map[string][]uint64)
+		p.expressions = make(map[string][]ast.Expression)
+		for uuid, ii := range p.indexinfos {
+			// url := ii.RouterNode
+			url := options.inhost // TODO [1]
+			if rpcconn, err = net.Dial("tcp", url); err != nil {
+				log.Printf("error connecting with indexer %v: %v\n", url, err)
+				return false
+			}
+			c := jsonrpc.NewClient(rpcconn)
+			p.indexers[uuid] = c
+			// Get sequence vector for each index
+			indexList := api.IndexList{uuid}
+			if err = c.Call(GETSEQUENCE_VECTOR, &indexList, &returnMap); err != nil {
+				log.Printf("getting sequence vector %v: %v\n", url, err)
+				return false
+			}
+			// Build sequence vector per bucket based on the collection of indexes
+			// defined on the bucket.
+			for uuid, vector := range returnMap {
+				bname := p.indexinfos[uuid].Bucket
+				for vb, seqno := range vector {
+					if p.bvb[bname] == nil {
+						p.bvb[bname] = make([]uint64, api.MAX_VBUCKETS)
+					}
+					if p.bvb[bname][vb] == 0 || p.bvb[bname][vb] > seqno {
+						p.bvb[bname][vb] = seqno
+					}
+				}
+			}
+
+			astexprs := make([]ast.Expression, 0)
+			for _, expr := range ii.OnExprList {
+				ex, err = ast.UnmarshalExpression([]byte(expr))
+				if err != nil {
+					log.Printf("unmarshal error: %v", err)
+					return false
+				}
+				astexprs = append(astexprs, ex)
+			}
+			p.expressions[uuid] = astexprs
+		}
+		log.Printf(
+			"Got %v indexes in %v buckets\n", len(p.indexinfos), len(p.bvb))
+		return true
+	})
+	return
+}
+
+func (p *projectorInfo) waitNotify(notifych chan string) {
+	var err error
+	if _, p.serverUuid, err = p.imanager.Notify(p.serverUuid); err != nil {
+		log.Println("Index manager closed connection:", err)
+		close(notifych)
+	}
+	notifych <- p.serverUuid
+}
+
+func (p *projectorInfo) close() {
+	for _, c := range p.indexers {
+		c.Close()
+	}
+}
+
+func (p *projectorInfo) loop(notifych chan string, eventch chan *goupr.UprEvent) {
+	var r bool
+	donech := make(chan *rpc.Call, maxOutstandingDone)
+loop:
 	for {
 		select {
 		case serverUuid, ok := <-notifych:
 			if ok {
 				log.Println("Notification received, serverUuid:", serverUuid)
 			}
-			break Loop
+			break loop
+		case call := <-donech:
+			if *call.Reply.(*bool) == false {
+				m := call.Args.(api.Mutation)
+				log.Println(
+					"%v failed (%v, %v, %v): %v",
+					m.Indexid, m.Docid, m.Seqno, call.Error)
+			}
 		case e := <-eventch:
-			for indexinfo, astexprs := range bucketexprs {
-				bucket, idxuuid := indexinfo.Bucket, indexinfo.Uuid
+			for uuid, astexprs := range p.expressions {
+				ii := p.indexinfos[uuid]
+				bucket, idxuuid := ii.Bucket, ii.Uuid
 				if e.Bucket != bucket {
 					continue
 				}
@@ -142,18 +209,14 @@ Loop:
 					Vbucket: e.Vbucket,
 					Seqno:   e.Seqno,
 				}
-				if indexinfo.IsPrimary && m.Type == api.INSERT {
+				if ii.IsPrimary && m.Type == api.INSERT {
 					m.SecondaryKey = [][]byte{e.Key}
 				} else if m.Type == api.INSERT {
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
-				log.Println("mutation recevied", e.Opstr, idxuuid, bucket,
-					m.Docid, fmtSKey(m.SecondaryKey))
-				var r bool
-				err := c.Call("MutationManager.ProcessSingleMutation", m, &r)
-				if err != nil {
-					log.Println("ERROR: Mutation manager:", err)
-				}
+				log.Println(e.Opstr, e.Seqno, idxuuid[:8], bucket, m.Docid, fmtSKey(m.SecondaryKey))
+				c := p.indexers[uuid]
+				c.Go(PROCESS_1MUTATION, m, &r, donech)
 			}
 		}
 	}
@@ -173,23 +236,7 @@ func evaluate(value []byte, astexprs []ast.Expression) [][]byte {
 	return secKey
 }
 
-func parseExpression(indexinfos []api.IndexInfo) map[*api.IndexInfo][]ast.Expression {
-	bucketexprs := make(map[*api.IndexInfo][]ast.Expression)
-	for i, indexinfo := range indexinfos {
-		astexprs := make([]ast.Expression, 0)
-		for _, expr := range indexinfo.OnExprList {
-			if ex, err := ast.UnmarshalExpression([]byte(expr)); err == nil {
-				astexprs = append(astexprs, ex)
-			} else {
-				panic(err)
-			}
-		}
-		bucketexprs[&indexinfos[i]] = astexprs
-	}
-	return bucketexprs
-}
-
-func tryIndexManager(fn func() bool) {
+func tryConnection(fn func() bool) {
 	retryInterval := initialRetryInterval
 	for {
 		ok := fn()
@@ -202,61 +249,6 @@ func tryIndexManager(fn func() bool) {
 			retryInterval = maximumRetryInterval
 		}
 	}
-}
-
-func waitNotify(imanager *imclient.RestClient, serverUuid string, notifych chan string) {
-	if _, serverUuid, err := imanager.Notify(serverUuid); err != nil {
-		log.Println("Index manager closed connection:", err)
-		close(notifych)
-	} else {
-		notifych <- serverUuid
-	}
-}
-
-func indexBuckets(indexinfos []api.IndexInfo) []string {
-	buckets := make(map[string]bool)
-	for _, indexinfo := range indexinfos {
-		if buckets[indexinfo.Bucket] == false {
-			buckets[indexinfo.Bucket] = true
-		}
-	}
-	uniquebuckets := make([]string, 0)
-	for bucket, _ := range buckets {
-		uniquebuckets = append(uniquebuckets, bucket)
-	}
-	return uniquebuckets
-}
-
-func getSequenceVectors(c *rpc.Client,
-	indexinfos []api.IndexInfo) BucketVBVector {
-
-	var returnMap api.IndexSequenceMap
-	indexMap := make(map[string]api.IndexInfo)
-	// Argument to GetSequenceVectors()
-	indexList := make([]string, 0)
-	for _, ii := range indexinfos {
-		indexList = append(indexList, ii.Uuid)
-		indexMap[ii.Uuid] = ii
-	}
-	err := c.Call("MutationManager.GetSequenceVectors", &indexList, &returnMap)
-	if err != nil {
-		log.Println("ERROR: Mutation manager:", err)
-	}
-	bvb := make(BucketVBVector)
-	for index_uuid, vector := range returnMap {
-		log.Println(vector)
-		bucket := indexMap[index_uuid].Bucket
-		for vb, seqno := range vector {
-			if bvb[bucket] == nil {
-				bvb[bucket] = make([]uint64, api.MAX_VBUCKETS)
-			}
-			if bvb[bucket][vb] == 0 || bvb[bucket][vb] > seqno {
-				bvb[bucket][vb] = seqno
-			}
-		}
-	}
-	log.Println(bvb)
-	return bvb
 }
 
 func fmtSKey(keys [][]byte) []string {
