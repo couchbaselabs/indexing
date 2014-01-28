@@ -78,7 +78,6 @@ loop:
 			break loop
 		}
 	}
-	close(streams.eventch)
 }
 
 func (streams *UprStreams) closeStreams() {
