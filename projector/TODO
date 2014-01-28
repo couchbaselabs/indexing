@@ -1,0 +1,2 @@
+* If a secondary index key is not present in a document don't send the mutation
+  further down stream.
