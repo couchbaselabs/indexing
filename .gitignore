@@ -4,3 +4,6 @@
 indexing
 *.idat.*
 tap.old
+indexer/indexer
+index_manager/index_manager
+projector/projector
