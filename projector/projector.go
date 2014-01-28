@@ -76,9 +76,9 @@ func main() {
 	}
 
 	eventch := make(chan *goupr.UprEvent)
-	streams := NewUprStreams(&couch, &pool, eventch)
 
 	for {
+		streams := NewUprStreams(&couch, &pool, eventch)
 		p := &projectorInfo{}
 		p.getMetaData()
 		if err := streams.openStreams(p.bvb); err == nil {
