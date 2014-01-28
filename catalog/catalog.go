@@ -69,10 +69,13 @@ type catalog struct {
 	indexes map[string]*api.IndexInfo
 }
 
-func NewIndexCatalog(datadir string) (c *catalog, err error) {
+func NewIndexCatalog(datadir, filename string) (c *catalog, err error) {
+	if filename == "" {
+		filename = CATALOGFILE
+	}
 	c = &catalog{
 		datadir: datadir,
-		file:    filepath.Join(datadir, CATALOGFILE),
+		file:    filepath.Join(datadir, filename),
 	}
 	if err = c.tryCreate(); err != nil {
 		return nil, err

@@ -28,7 +28,7 @@ func main() {
 	var err error
 
 	// Create index catalog
-	if c, err = catalog.NewIndexCatalog("./"); err != nil {
+	if c, err = catalog.NewIndexCatalog("./", "im_catalog.dat"); err != nil {
 		panic(err)
 	}
 
