@@ -95,7 +95,7 @@ func check(e error) {
 	}
 }
 
-//this is to set the timeout in number of seconds
+//this is to set the timeout in number of NanoSeconds
 //use absolute time value to avoid miscalculations
 func (wd *Watchdog) reset(timeoutNanoSecs int64) {
 	wd.resets <- timeoutNanoSecs + time.Now().UnixNano()
