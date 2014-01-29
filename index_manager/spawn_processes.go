@@ -97,8 +97,8 @@ func check(e error) {
 
 //this is to set the timeout in number of seconds
 //use absolute time value to avoid miscalculations
-func (wd *Watchdog) reset(timeoutSecs int64) {
-	wd.resets <- timeoutSecs + time.Now().UnixNano()
+func (wd *Watchdog) reset(timeoutNanoSecs int64) {
+	wd.resets <- timeoutNanoSecs + time.Now().UnixNano()
 }
 
 func main() {
@@ -150,9 +150,13 @@ func main() {
 
 		//test only for the watchdogs
 		wdg[i] = newWatchdog()
-        //set the timeout as 50 seconds in the test, it should change later 
+        //set the timeout as 50 NanoSeconds in the test, it should change later 
         //based on the application scenarios
 		wdg[i].reset(50)
+
+        // TO CHANGE: use go routine to check the timeout
+        // and use another boolean to see if timeout occurs
+        //before the process ends
         tmo:= <-wdg[i].timeouts
         if (tmo == true) {
 		    fmt.Fprintf(logFile, "Timed out!")
