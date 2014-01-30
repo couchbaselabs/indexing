@@ -115,6 +115,9 @@ func check_timeouts(wd *Watchdog,
 		// if it is still running
 	}
 	//no need to continue the timer if process already ends
+    // TO CHANGE: later on to use additional channel for
+    // the coordination between timeout_checking and
+    // process completion
 	if pre == 1 {
 		wd.reset(0)
 	}
@@ -130,6 +133,9 @@ func run_procs(cmd *exec.Cmd, wd *Watchdog,
 	go check_timeouts(wd, logFile, 0)
 restart:
 	//run the process and returns the output
+    // TO CHANGE: just call cmd.Start() without waiting to 
+    //complete and use additional channel to coordinate
+    // with timeout_checking
 	cmdOut, err := cmd.Output()
 	if err != nil {
 		log.Fatal(err)
