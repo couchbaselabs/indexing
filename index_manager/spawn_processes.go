@@ -46,8 +46,8 @@ func newWatchdog() *Watchdog {
 
 		timeouts: make(chan bool, 2),
 	}
-    //init. as false to coordinate events
-    wd.timeouts <- false
+	//init. as false to coordinate events
+	wd.timeouts <- false
 	go wd.loop()
 	return wd
 }
@@ -97,23 +97,60 @@ func check(e error) {
 	}
 }
 
-//this is to set the timeout in number of NanoSeconds
+//this is to set the timeout in Seconds
 //use absolute time value to avoid miscalculations
-func (wd *Watchdog) reset(timeoutNanoSecs int64) {
-	wd.resets <- timeoutNanoSecs + time.Now().UnixNano()
+func (wd *Watchdog) reset(timeoutSecs int64) {
+	wd.resets <- timeoutSecs + time.Now().UnixNano()
 }
 
-//check timeouts, TO CHANGE: may need to add additional
+//check timeouts, note that we may need to add additional
 //channel to coordinate
-func check_timeouts(wd *Watchdog, logFile *os.File) int {
-    tmo:= <-wd.timeouts
-    if (tmo == true) {
-        fmt.Fprintf(logFile, "Timed out!")
-        return 1
-    }
-    //no need to continue the timer
-    wd.reset(0)
-    return 0
+func check_timeouts(wd *Watchdog,
+	logFile *os.File, pre int) {
+	tmo := <-wd.timeouts
+	if tmo == true {
+		fmt.Fprintf(logFile, "Timed out!")
+		// TO ADD: we may need to terminate
+		// the spawned process forcefully here
+		// if it is still running
+	}
+	//no need to continue the timer if process already ends
+	if pre == 1 {
+		wd.reset(0)
+	}
+}
+
+//run procs, if it fails, we need to retry
+//with configuratable delay time and maximum
+//number of tries
+func run_procs(cmd *exec.Cmd, wd *Watchdog,
+	logFile *os.File, delaySecs int64,
+	numRetries int, tmo int64) {
+	//check the timeout with a goroutine
+	go check_timeouts(wd, logFile, 0)
+restart:
+	//run the process and returns the output
+	cmdOut, err := cmd.Output()
+	if err != nil {
+		log.Fatal(err)
+		//restart if it errors out
+		numRetries--
+		if numRetries >= 0 {
+			//delay for a while
+			time.Sleep(time.Second * time.Duration(delaySecs))
+			//reset the watchdog timer
+			wd.reset(tmo)
+			//retry
+			goto restart
+		}
+	}
+	go check_timeouts(wd, logFile, 1)
+
+	//deal with the output
+	log.Println(string(cmdOut))
+	fmt.Fprintf(logFile, string(cmdOut))
+	//wait until operation on logFile is done, close it
+	defer logFile.Close()
 }
 
 func main() {
@@ -144,10 +181,13 @@ func main() {
 	fmt.Println()
 
 	//watchdog for each process
+	var tmo int64
+	var delaySecs int64
+	var numRetries int
 	var wdg []*Watchdog
 	wdg = make([]*Watchdog, len(processes.Processes))
 
-	//spawn processes
+	//spawning processes
 	for i := 0; i <= len(processes.Processes)-1; i++ {
 		fileName := "logfile"
 		//log file name is based on date/time
@@ -157,27 +197,18 @@ func main() {
 		fileName += string(cmdOut) + "_" + string(48+i)
 		logFile, err = os.Create(fileName)
 		check(err)
-        
-        //TO CHANGE: use goroutines to do this 
-		cmd = exec.Command(processes.Processes[i].Name, processes.Processes[i].Cmdargs)
-		cmdOut, err = cmd.Output()
-		//TODO: if there is error, needs to restart for a given number of times
-		check(err)
 
 		//test only for the watchdogs
 		wdg[i] = newWatchdog()
-        //set the timeout as 50 NanoSeconds in the test, it should change later 
-        //based on the application scenarios
-		wdg[i].reset(50)
+		//set the timeout as 5 Seconds in the test, it should change later
+		//based on the application scenarios
+		tmo = 5
+		delaySecs = 1
+		numRetries = 3
+		wdg[i].reset(tmo)
 
-        // use goroutines to check the timeout
-        // and use another channel w/ buffer size to see if timeout occurs
-        //before the process ends, if process already ends, reset(0)
-        go check_timeouts(wdg[i], logFile)
-
-		//fmt.Println(string(cmdOut))
-		log.Println(string(cmdOut))
-		fmt.Fprintf(logFile, string(cmdOut))
-		defer logFile.Close()
+        //spawn and run the processes
+		cmd = exec.Command(processes.Processes[i].Name, processes.Processes[i].Cmdargs)
+		run_procs(cmd, wdg[i], logFile, delaySecs, numRetries, tmo)
 	}
 }
