@@ -26,7 +26,7 @@ func main() {
 	var err error
 
 	// Create index catalog
-	if c, err = catalog.NewIndexCatalog("./"); err != nil {
+	if c, err = catalog.NewIndexCatalog("./", "icatalog.dat"); err != nil {
 		log.Fatalf("Fatal error opening catalog: %v", err)
 	}
 
