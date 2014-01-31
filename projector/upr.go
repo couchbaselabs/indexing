@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/couchbaselabs/go-couchbase"
+	"github.com/prataprc/go-couchbase"
 	"github.com/prataprc/goupr"
 	"log"
 	//"strings"

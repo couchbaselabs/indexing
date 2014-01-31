@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 	"github.com/couchbaselabs/dparval"
-	"github.com/couchbaselabs/go-couchbase"
 	"github.com/couchbaselabs/indexing/api"
 	imclient "github.com/couchbaselabs/indexing/index_manager/client"
 	ast "github.com/couchbaselabs/tuqtng/ast"
+	"github.com/prataprc/go-couchbase"
 	"github.com/prataprc/goupr"
 	"log"
 	"net"
