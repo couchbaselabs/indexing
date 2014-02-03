@@ -1,9 +1,19 @@
 {
-    "Processes": [
-        { "Name" : "date",
-          "Path" : "./",
-          "Cmdargs" : ["-d"],
-          "Env"  : [""]
+    "processes": [
+        { "name" : "date",
+          "path" : "./",
+          "cmdargs" : "-u",
+          "env"  : [""]
+        },
+        { "name" : "ls",
+          "path" : "./",
+          "cmdargs" : "-lrt",
+          "env"  : [""]
+        },
+        { "name" : "ps",
+          "path" : "./",
+          "cmdargs" : "-alf",
+          "env"  : [""]
         }
     ]
 }
