@@ -16,7 +16,6 @@ import (
 	imclient "github.com/couchbaselabs/indexing/index_manager/client"
 	ast "github.com/couchbaselabs/tuqtng/ast"
 	"github.com/prataprc/go-couchbase"
-	"github.com/prataprc/goupr"
 	"log"
 	"net"
 	"net/rpc"
@@ -84,7 +83,8 @@ func main() {
 		log.Fatalf("Error getting pool:  %v", err)
 	}
 
-	eventch := make(chan *goupr.UprEvent)
+	// TODO: can send UprEvent as pointer ? will there be an async problem ?
+	eventch := make(chan *couchbase.UprEvent)
 
 	for {
 		streams := NewUprStreams(&couch, &pool, eventch)
@@ -186,7 +186,9 @@ func (p *projectorInfo) close() {
 	}
 }
 
-func (p *projectorInfo) loop(notifych chan string, eventch chan *goupr.UprEvent) {
+func (p *projectorInfo) loop(notifych chan string,
+	eventch chan *couchbase.UprEvent) {
+
 	var r bool
 	donech := make(chan *rpc.Call, maxOutstandingDone)
 loop:

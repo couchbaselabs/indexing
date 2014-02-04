@@ -12,7 +12,6 @@ package main
 import (
 	"fmt"
 	"github.com/prataprc/go-couchbase"
-	"github.com/prataprc/goupr"
 	"log"
 	//"strings"
 	"time"
@@ -22,19 +21,19 @@ type UprStreams struct {
 	client  *couchbase.Client
 	pool    *couchbase.Pool
 	buckets map[string]*couchbase.Bucket // [bucketname]*couchbase.Bucket
-	feeds   map[string]*goupr.UprFeed
-	eventch chan *goupr.UprEvent
+	feeds   map[string]*couchbase.UprFeed
+	eventch chan *couchbase.UprEvent
 	quit    chan bool
 }
 
 func NewUprStreams(c *couchbase.Client, p *couchbase.Pool,
-	eventch chan *goupr.UprEvent) *UprStreams {
+	eventch chan *couchbase.UprEvent) *UprStreams {
 
 	return &UprStreams{
 		client:  c,
 		pool:    p,
 		buckets: make(map[string]*couchbase.Bucket),
-		feeds:   make(map[string]*goupr.UprFeed),
+		feeds:   make(map[string]*couchbase.UprFeed),
 		eventch: eventch,
 		quit:    make(chan bool),
 	}
@@ -43,8 +42,8 @@ func NewUprStreams(c *couchbase.Client, p *couchbase.Pool,
 func (streams *UprStreams) openStreams(bvb map[string][]uint64) (err error) {
 	var pool couchbase.Pool
 	var b *couchbase.Bucket
-	var flogs []goupr.FailoverLog
-	var feed *goupr.UprFeed
+	var flogs []couchbase.FailoverLog
+	var feed *couchbase.UprFeed
 
 	// Refresh the pool to get any new buckets created on the server.
 	pool, err = streams.client.GetPool("default")
@@ -60,11 +59,11 @@ func (streams *UprStreams) openStreams(bvb map[string][]uint64) (err error) {
 		}
 		streams.buckets[bname] = b
 		name := fmt.Sprintf("%v", time.Now().UnixNano())
-		if flogs, err = goupr.GetFailoverLogs(b, name); err != nil {
+		if flogs, err = couchbase.GetFailoverLogs(b, name); err != nil {
 			break
 		}
 		uprstreams := makeUprStream(seqVector, flogs)
-		if feed, err = goupr.StartUprFeed(b, name, uprstreams); err != nil {
+		if feed, err = couchbase.StartUprFeed(b, name, uprstreams); err != nil {
 			break
 		}
 		streams.feeds[bname] = feed
@@ -73,7 +72,7 @@ func (streams *UprStreams) openStreams(bvb map[string][]uint64) (err error) {
 	return
 }
 
-func (streams *UprStreams) getEvents(b *couchbase.Bucket, feed *goupr.UprFeed) {
+func (streams *UprStreams) getEvents(b *couchbase.Bucket, feed *couchbase.UprFeed) {
 loop:
 	for {
 		select {
@@ -98,11 +97,13 @@ func (streams *UprStreams) closeStreams() {
 	}
 }
 
-func makeUprStream(seqVector []uint64, flogs []goupr.FailoverLog) map[uint16]*goupr.UprStream {
-	uprstreams := make(map[uint16]*goupr.UprStream)
+func makeUprStream(seqVector []uint64,
+	flogs []couchbase.FailoverLog) map[uint16]*couchbase.UprStream {
+
+	uprstreams := make(map[uint16]*couchbase.UprStream)
 	for vbno, flog := range flogs {
 		vb := uint16(vbno)
-		uprstream := &goupr.UprStream{
+		uprstream := &couchbase.UprStream{
 			Vbucket:  vb,
 			Vuuid:    flog[0][0],
 			Startseq: seqVector[vb],
