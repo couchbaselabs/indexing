@@ -31,10 +31,19 @@ type seqNotification struct {
 	vbucket uint16
 }
 
+//error state flag
+var indexerErrorState bool
+var indexerErrorString string
+
+//channel for sequence notification
 var chseq chan seqNotification
 
 //This function returns a map of <Index, SequenceVector> based on the IndexList received in request
 func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api.IndexSequenceMap) error {
+
+	//reset the error state at each handshake
+	indexerErrorState = false
+	indexerErrorString = ""
 
 	//if indexList is nil, return the complete map
 	if len(indexList) == 0 {
@@ -64,8 +73,21 @@ func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api
 func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *bool) error {
 	log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
 
-	//FIXME change this to channel based
-	*reply = false
+	//if there is any pending error, reply with that. This will force a handshake again.
+	if indexerErrorState == true {
+		*reply = false
+	}
+
+	//copy the mutation data and return
+	mutationCopy := *mutation
+	go m.handleMutation(mutationCopy)
+	*reply = true
+	return nil
+
+}
+
+//process the mutation, store it. In case of any error, set indexerInErrorState to TRUE
+func (m *MutationManager) handleMutation(mutation api.Mutation) {
 
 	if mutation.Type == api.INSERT {
 
@@ -74,22 +96,18 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 		var err error
 
 		if key, err = api.NewKey(mutation.SecondaryKey, mutation.Docid); err != nil {
-			log.Printf("Error Generating Key From Mutation %v", err)
-			*reply = false
-			return err
+			log.Printf("Error Generating Key From Mutation %v. Skipped.", err)
+			return
 		}
 
 		if value, err = api.NewValue(mutation.SecondaryKey, mutation.Docid, mutation.Vbucket, mutation.Seqno); err != nil {
-			log.Printf("Error Generating Value From Mutation %v", err)
-			*reply = false
-			return err
+			log.Printf("Error Generating Value From Mutation %v. Skipped.", err)
+			return
 		}
 
 		if engine, ok := m.enginemap[mutation.Indexid]; ok {
 			if err := engine.InsertMutation(key, value); err != nil {
-				log.Printf("Error from Engine during InsertMutation %v", err)
-				*reply = false
-				return err
+				log.Printf("Error from Engine during InsertMutation. Key %v. Index %v. Error %v", key, mutation.Docid, err)
 			}
 			//send notification for this seqno to be recorded in SeqVector
 			seqnotify := seqNotification{engine: engine,
@@ -100,19 +118,16 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 			chseq <- seqnotify
 		} else {
 			log.Printf("Unknown Index %v or Engine not found", mutation.Indexid)
-			*reply = false
-			return errors.New("Unknown Index or Engine not found")
+			indexerErrorState = true
+			indexerErrorString = "Unknown Index or Engine not found"
 		}
-
-		*reply = true
 
 	} else if mutation.Type == api.DELETE {
 
 		if engine, ok := m.enginemap[mutation.Indexid]; ok {
 			if err := engine.DeleteMutation(mutation.Docid); err != nil {
-				log.Printf("Error from Engine during Delete Mutation %v", err)
-				*reply = false
-				return err
+				log.Printf("Error from Engine during Delete Mutation. Key %v. Error %v", mutation.Docid, err)
+				return
 			}
 			//send notification for this seqno to be recorded in SeqVector
 			seqnotify := seqNotification{engine: engine,
@@ -123,13 +138,10 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 			chseq <- seqnotify
 		} else {
 			log.Printf("Unknown Index %v or Engine not found", mutation.Indexid)
-			*reply = false
-			return errors.New("Unknown Index or Engine not found")
+			indexerErrorState = true
+			indexerErrorString = "Unknown Index or Engine not found"
 		}
-		*reply = true
-
 	}
-	return nil
 }
 
 func StartMutationManager(engineMap map[string]api.Finder) (chan ddlNotification, error) {
@@ -199,8 +211,12 @@ func acceptIndexerNotification(chnotify chan ddlNotification) {
 			switch ddl.ddltype {
 			case api.CREATE:
 				mutationMgr.enginemap[ddl.indexinfo.Uuid] = ddl.engine
+				//init sequence map of new index
+				var seqVec api.SequenceVector
+				mutationMgr.sequencemap[ddl.indexinfo.Uuid] = seqVec
 			case api.DROP:
 				delete(mutationMgr.enginemap, ddl.indexinfo.Uuid)
+				//FIXME : Delete index entry from sequence map
 			default:
 				log.Printf("Mutation Manager Received Unsupported Notification %v", ddl.ddltype)
 			}
