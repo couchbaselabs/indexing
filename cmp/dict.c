@@ -464,7 +464,3 @@ static uint8_t actual_size(uint16_t num)
     return size;
 }
 
-int main() {
-//does nothing for now in the main
-    return 0;
-}
