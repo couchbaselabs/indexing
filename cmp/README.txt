@@ -22,10 +22,10 @@ encoding, dictionary coding) that can be used for in-memory compression.
 If you have any questions, feel free to CONTACT: fulu@couchbase.com
 
 Purpose: The compression modules can be used to compress Doc metadata in memory, 
-in particualr for DocID (16 bytes) using delta encoding/decoding, for Seqno 
-(8 bytes), item expiration time (4 bytes) and lock expiration time (4 bytes) 
-using symbol table compression. CasID (8 bytes) may or may not be suited for
-compression as it might change frequently.
+in particualr for DocID (16 bytes), CasID (8 bytes), Seqno
+(8 bytes) using delta encoding/decoding, for item expiration time (4 bytes) and 
+lock expiration time (4 bytes) using symbol table compression. For items that are
+loaded in the same batch have the same expiration times. 
 
 Here are the explanations/manuals and descriptions on the usage of the compression 
 modules (delta encoding/decoding, symbol table compression) APIs:
