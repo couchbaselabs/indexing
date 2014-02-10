@@ -114,3 +114,9 @@ Usage: to free allocated memory for the given symbol table of st.
 
     Finally, when all is done, call st_free() to free the allocated memory.
 
+(9) Tests:
+    (a) Compile delta.c and delta_test.c together to run the simple tests for delta 
+        encoding/decoding modules.
+    (b) Compile dict.c and dict_test.c together to run the simple tests for dictionary
+        coding compression modules.
+ 
