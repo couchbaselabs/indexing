@@ -245,7 +245,7 @@ int main()
     printf("\n");
 
     if (delta_decode(arr, 20, idx[0], &b[0]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     printf("\n");
     if (idx[0] != 0) {
@@ -254,14 +254,14 @@ int main()
 
     //call delta_decode()
     if (delta_decode(arr, 20, idx[1], &b[1]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     if (idx[1] != 0) {
         free(b[1]); // free space
     }
 
     if (delta_decode(arr, 20, idx[2], &b[2]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     if (idx[2] != 0) {
         free(b[2]); // free space
@@ -269,7 +269,7 @@ int main()
     
     //call delta_decode()
     if (delta_decode(arr, 20, idx[3], &b[3]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     if (idx[3] != 0) {
         free(b[3]); // free space
@@ -277,7 +277,7 @@ int main()
 
     //call delta_decode()
     if (delta_decode(arr, 20, idx[4], &b[4]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     if (idx[4] != 0) {
         free(b[4]); // free space
@@ -285,7 +285,7 @@ int main()
 
     //call delta_decode()
     if (delta_decode(arr, 20, idx[5], &b[5]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     if (idx[5] != 0) {
         free(b[5]); // free space 
@@ -296,7 +296,7 @@ int main()
 
     //call delta_decode()
     if (delta_decode(arr, 20, idx[0], &b[0]) == DELTA_DECODE_SUCCESS) {
-        printf("delta decode succeeds:\n");
+        printf("delta decode succeeds.\n");
     }
     printf("\n");
     if (idx[0] != 0) {
