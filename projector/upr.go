@@ -10,11 +10,11 @@
 package main
 
 import (
-	"fmt"
+	//"fmt"
 	"github.com/prataprc/go-couchbase"
 	"log"
 	//"strings"
-	"time"
+	//"time"
 )
 
 type UprStreams struct {
@@ -58,7 +58,8 @@ func (streams *UprStreams) openStreams(bvb map[string][]uint64) (err error) {
 			break
 		}
 		streams.buckets[bname] = b
-		name := fmt.Sprintf("%v", time.Now().UnixNano())
+		//name := fmt.Sprintf("%v", time.Now().UnixNano())
+		name := "index"
 		if flogs, err = couchbase.GetFailoverLogs(b, name); err != nil {
 			break
 		}
