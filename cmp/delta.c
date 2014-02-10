@@ -267,7 +267,3 @@ out:
     return errcode;
 }
 
-int main() {
-//does nothing for now in the main
-    return 0;
-}
