@@ -116,7 +116,9 @@ Usage: to free allocated memory for the given symbol table of st.
 
 (9) Tests:
     (a) Compile delta.c and delta_test.c together to run the simple tests for delta 
-        encoding/decoding modules.
+        encoding/decoding modules: most of the logic paths are covered and some corner cases may 
+        not be covered.
     (b) Compile dict.c and dict_test.c together to run the simple tests for dictionary
-        coding compression modules.
+        coding compression modules: most of the logic paths are covered and some corner cases may
+        not be covered.
  
