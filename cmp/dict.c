@@ -25,13 +25,6 @@
 #include <math.h>
 #include "dict.h"
 
-//note that token starts from 1
-#define NUM_OF_TOKENS_LIMIT 65534
-#define CLEANUP_THRESHOLD 30000
-#define NUM_OF_ITEMS_LIMIT 1000000
-#define RATIO_THRESHOLD 15
-#define FREQ_THRESHOLD 4
-
 static void free_list_node(sym_list_t *node);
 static sym_table_error_t insert_item(sym_table_t **st,
                                      sym_list_t *item);

@@ -25,6 +25,13 @@
 #include <string.h>
 #include <stdint.h>
 
+//note that token starts from 1
+#define NUM_OF_TOKENS_LIMIT 65534
+#define CLEANUP_THRESHOLD 30000
+#define NUM_OF_ITEMS_LIMIT 1000000
+#define RATIO_THRESHOLD 15
+#define FREQ_THRESHOLD 4
+
 #ifdef __cplusplus
 extern "C" {
 #endif
