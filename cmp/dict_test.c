@@ -235,6 +235,7 @@ out:
         goto out2;
     }
     memcpy(tok.buf, &tk, tok.size);
+    printf("Dictionary lookup: given a token, look for the corresponding symbol ... \n");
     for (i = 0; i < tok.size; ++i) {
         printf("lookup: token value is %d", tok.buf[i]);
     }
@@ -333,7 +334,7 @@ out:
     }
     //free memory
     free(tok.buf);
-
+    printf("Dictionary lookup: given a symbol, look for the corresponding token ... \n");
     rtn = st_lookup_s2t(st, &sym[0]);
     printf("Lookup: symbol is: ");
     for (i = 0; i < sym[0].size; ++i) {
