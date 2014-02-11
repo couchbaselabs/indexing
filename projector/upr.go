@@ -10,95 +10,42 @@
 package main
 
 import (
-	//"fmt"
+	"github.com/couchbaselabs/indexing/api"
 	"github.com/prataprc/go-couchbase"
 	"log"
-	//"strings"
-	//"time"
 )
 
-type UprStreams struct {
-	client  *couchbase.Client
-	pool    *couchbase.Pool
-	buckets map[string]*couchbase.Bucket // [bucketname]*couchbase.Bucket
-	feeds   map[string]*couchbase.UprFeed
-	eventch chan *couchbase.UprEvent
-	quit    chan bool
+type UprBucketFeed struct {
+	bucket *couchbase.Bucket // [bucketname]*couchbase.Bucket
+	feed   *couchbase.UprFeed
 }
 
-func NewUprStreams(c *couchbase.Client, p *couchbase.Pool,
-	eventch chan *couchbase.UprEvent) *UprStreams {
-
-	return &UprStreams{
-		client:  c,
-		pool:    p,
-		buckets: make(map[string]*couchbase.Bucket),
-		feeds:   make(map[string]*couchbase.UprFeed),
-		eventch: eventch,
-		quit:    make(chan bool),
-	}
+func NewUprStreams(b *couchbase.Bucket) *UprBucketFeed {
+	return &UprBucketFeed{bucket: b}
 }
 
-func (streams *UprStreams) openStreams(bvb map[string][]uint64) (err error) {
-	var pool couchbase.Pool
-	var b *couchbase.Bucket
-	var flogs []couchbase.FailoverLog
-	var feed *couchbase.UprFeed
-
-	// Refresh the pool to get any new buckets created on the server.
-	pool, err = streams.client.GetPool("default")
+func (bfeed *UprBucketFeed) openFeed(sv api.SequenceVector) (err error) {
+	log.Println("Opening feed for bucket:", bfeed.bucket.Name)
+	//name := fmt.Sprintf("%v", time.Now().UnixNano())
+	name := "index"
+	flogs, err := couchbase.GetFailoverLogs(bfeed.bucket, name)
 	if err != nil {
 		return
 	}
-	streams.pool = &pool
-
-	for bname, seqVector := range bvb {
-		log.Println("Opening streams for bucket", bname)
-		if b, err = streams.pool.GetBucket(bname); err != nil {
-			break
-		}
-		streams.buckets[bname] = b
-		//name := fmt.Sprintf("%v", time.Now().UnixNano())
-		name := "index"
-		if flogs, err = couchbase.GetFailoverLogs(b, name); err != nil {
-			break
-		}
-		uprstreams := makeUprStream(seqVector, flogs)
-		if feed, err = couchbase.StartUprFeed(b, name, uprstreams); err != nil {
-			break
-		}
-		streams.feeds[bname] = feed
-		go streams.getEvents(b, feed)
+	uprstreams := makeUprStream(sv, flogs)
+	bfeed.feed, err = couchbase.StartUprFeed(bfeed.bucket, name, uprstreams)
+	if err != nil {
+		return
 	}
 	return
 }
 
-func (streams *UprStreams) getEvents(b *couchbase.Bucket, feed *couchbase.UprFeed) {
-loop:
-	for {
-		select {
-		case e, ok := <-feed.C:
-			if ok {
-				streams.eventch <- &e
-			} else {
-				break loop
-			}
-		case <-streams.quit:
-			break loop
-		}
-	}
+func (bfeed *UprBucketFeed) closeFeed() {
+	log.Printf("Closing feed for %v ...\n", bfeed.bucket.Name)
+	bfeed.feed.Close()
 }
 
-func (streams *UprStreams) closeStreams() {
-	log.Println("Closing feeds ...")
-	close(streams.quit)
-	for bname, bucket := range streams.buckets {
-		bucket.Close()
-		streams.feeds[bname].Close()
-	}
-}
-
-func makeUprStream(seqVector []uint64,
+func makeUprStream(seqVector api.SequenceVector,
 	flogs []couchbase.FailoverLog) map[uint16]*couchbase.UprStream {
 
 	uprstreams := make(map[uint16]*couchbase.UprStream)
