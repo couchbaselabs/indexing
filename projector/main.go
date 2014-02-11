@@ -81,8 +81,9 @@ func main() {
 				bmeta:      bmeta,
 				nconn:      options.nconn,
 				rpcurl:     options.inhost,
+				quit:       q,
 			})
-			go bw.run(killStart, q)
+			go bw.run(killStart)
 		}
 		notifych := make(chan string)
 		go p.waitNotify(notifych)
