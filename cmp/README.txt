@@ -16,6 +16,16 @@
  * the License.
  **/
 
+FILES
+----
+delta.h         - Header file for delta encoding
+delta.c         - Source code for delta encoding
+delta_test.c    - Tests for delta encoding modules 
+dict.h          - Header file for dictionary coding
+dict.c          - Source code for dictionary coding
+dict_test.c     - Tests for dictionary coding modules 
+README.txt      - this file
+
 Here are some documentation materials/manuals for new compression modules (delta 
 encoding, dictionary coding) that can be used for in-memory compression.
 
