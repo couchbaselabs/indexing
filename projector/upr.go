@@ -28,7 +28,7 @@ func (bfeed *UprBucketFeed) openFeed(sv api.SequenceVector) (err error) {
 	log.Println("Opening feed for bucket:", bfeed.bucket.Name)
 	//name := fmt.Sprintf("%v", time.Now().UnixNano())
 	name := "index"
-	flogs, err := couchbase.GetFailoverLogs(bfeed.bucket, name)
+	flogs, err := bfeed.bucket.GetFailoverLogs(name)
 	if err != nil {
 		return
 	}
