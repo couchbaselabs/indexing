@@ -23,9 +23,13 @@
 #include <stdint.h>
 #include "rle.h"
 
+/* for compression, use inline compression as much as possible
+ * with minimal required additional buffer space, then release
+ * unused memory space after compression
+ */
 
 /* traditional run length encoding algorithm that is suited for
-    in memory compression
+ * in memory compression
  */
 rle_encode_error_t rle_enc_trd(sized_buf *in,
                                sized_buf **out) {
@@ -57,7 +61,7 @@ rle_decode_error_t rle_dec_trd(sized_buf *in,
 
 
 /* run length encoding based on PackBits algorithm that is suited for
-   in memory compression
+ * in memory compression
  */
 rle_encode_error_t rle_enc_pkb(sized_buf *in,
                                sized_buf **out){

@@ -30,7 +30,8 @@ extern "C" {
 #endif
     typedef struct {
         char *buf;
-        uint32_t size;
+        uint32_t org_size;
+        uint32_t cmp_size;
     } sized_buf;
 
     typedef enum {
