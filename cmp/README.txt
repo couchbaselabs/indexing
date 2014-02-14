@@ -26,6 +26,7 @@ dict.c          - Source code for dictionary coding
 dict_test.c     - Tests for dictionary coding modules 
 README.txt      - this file
 rle.h           - Header file for run length encoding
+rle.c           - Source code for run length encoding (TBD)
 
 Here are some documentation materials/manuals for new compression modules (delta 
 encoding, dictionary coding) that can be used for in-memory compression.
