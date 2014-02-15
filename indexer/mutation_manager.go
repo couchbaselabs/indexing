@@ -12,20 +12,23 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"log"
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
+	"sync"
 )
 
 type MutationManager struct {
 	enginemap   map[string]api.Finder
 	sequencemap api.IndexSequenceMap
+	chmutation  chan api.Mutation                       //buffered channel to store incoming mutations
+	chworkers   [MAX_MUTATION_WORKERS]chan api.Mutation //buffered channel for each worker
+	chseq       chan seqNotification                    //buffered channel to store sequence notifications from workers
+	chddl       chan ddlNotification                    //channel for incoming ddl notifications
 }
-
-var META_DOC_ID = "."
-var mutationMgr MutationManager
 
 type ddlNotification struct {
 	indexinfo api.IndexInfo
@@ -43,16 +46,33 @@ type seqNotification struct {
 //error state flag
 var indexerErrorState bool
 var indexerErrorString string
+var wg sync.WaitGroup
+var chdrain chan bool
 
-//channel for sequence notification
-var chseq chan seqNotification
+const MAX_INCOMING_QUEUE = 50000
+const MAX_MUTATION_WORKERS = 8
+const MAX_WORKER_QUEUE = 1000
+const MAX_SEQUENCE_QUEUE = 50000
+const META_DOC_ID = "."
+const SEQ_MAP_PERSIST_INTERVAL = 10 //number of mutations after which sequence map is persisted
+
+var mutationMgr MutationManager
+
+//perf data
+var mutationCount int64
+
+//---Exported RPC methods which are available to remote clients
 
 //This function returns a map of <Index, SequenceVector> based on the IndexList received in request
 func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api.IndexSequenceMap) error {
 
-	//reset the error state at each handshake
-	indexerErrorState = false
-	indexerErrorString = ""
+	// if indexer is in error state, let the error handing routines finish
+	if indexerErrorState == true {
+		wg.Wait()
+		//reset the error state at each handshake
+		indexerErrorState = false
+		indexerErrorString = ""
+	}
 
 	//if indexList is nil, return the complete map
 	if len(indexList) == 0 {
@@ -79,8 +99,9 @@ func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api
 
 }
 
+//This method takes as input an api.Mutation and copies into mutation queue for processing
 func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *bool) error {
-	log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
+	//	log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
 
 	//if there is any pending error, reply with that. This will force a handshake again.
 	if indexerErrorState == true {
@@ -88,14 +109,45 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 	}
 
 	//copy the mutation data and return
-	mutationCopy := *mutation
-	go m.handleMutation(mutationCopy)
+	m.chmutation <- *mutation
 	*reply = true
 	return nil
 
 }
 
-//process the mutation, store it. In case of any error, set indexerInErrorState to TRUE
+//---End of exported RPC methods
+
+//read incoming mutation and distribute it on worker queues based on vbucketid
+func (m *MutationManager) manageMutationQueue() {
+
+	for {
+		select {
+		case mut, ok := <-m.chmutation:
+			if ok {
+				m.chworkers[mut.Vbucket%MAX_MUTATION_WORKERS] <- mut
+			}
+		case <-chdrain:
+			wg.Add(1)
+			m.drainMutationChannel(m.chmutation)
+		}
+	}
+
+}
+
+//start a mutation worker which handles mutation on the specified workerId channel
+func (m *MutationManager) startMutationWorker(workerId int) {
+
+	for {
+		select {
+		case mutation := <-m.chworkers[workerId]:
+			m.handleMutation(mutation)
+		case <-chdrain:
+			wg.Add(1)
+			m.drainMutationChannel(m.chworkers[workerId])
+		}
+	}
+}
+
 func (m *MutationManager) handleMutation(mutation api.Mutation) {
 
 	if mutation.Type == api.INSERT {
@@ -124,11 +176,10 @@ func (m *MutationManager) handleMutation(mutation api.Mutation) {
 				seqno:   mutation.Seqno,
 				vbucket: mutation.Vbucket,
 			}
-			chseq <- seqnotify
+			m.chseq <- seqnotify
 		} else {
-			log.Printf("Unknown Index %v or Engine not found", mutation.Indexid)
-			indexerErrorState = true
-			indexerErrorString = "Unknown Index or Engine not found"
+			err := fmt.Sprintf("Unknown Index %v or Engine not found", mutation.Indexid)
+			m.initErrorState(err)
 		}
 
 	} else if mutation.Type == api.DELETE {
@@ -144,11 +195,10 @@ func (m *MutationManager) handleMutation(mutation api.Mutation) {
 				seqno:   mutation.Seqno,
 				vbucket: mutation.Vbucket,
 			}
-			chseq <- seqnotify
+			m.chseq <- seqnotify
 		} else {
-			log.Printf("Unknown Index %v or Engine not found", mutation.Indexid)
-			indexerErrorState = true
-			indexerErrorString = "Unknown Index or Engine not found"
+			err := fmt.Sprintf("Unknown Index %v or Engine not found", mutation.Indexid)
+			m.initErrorState(err)
 		}
 	}
 }
@@ -158,7 +208,6 @@ func StartMutationManager(engineMap map[string]api.Finder) (chan ddlNotification
 	var err error
 
 	//init the mutation manager maps
-	//mutationMgr.enginemap= make(map[string]api.Finder)
 	mutationMgr.sequencemap = make(api.IndexSequenceMap)
 	//copy the inital map from the indexer
 	mutationMgr.enginemap = engineMap
@@ -166,20 +215,35 @@ func StartMutationManager(engineMap map[string]api.Finder) (chan ddlNotification
 
 	//create channel to receive notification for new sequence numbers
 	//and start a goroutine to manage it
-	chseq = make(chan seqNotification, api.MAX_VBUCKETS)
-	go mutationMgr.manageSeqNotification(chseq)
+	mutationMgr.chseq = make(chan seqNotification, MAX_SEQUENCE_QUEUE)
+	go mutationMgr.manageSeqNotification()
 
 	//create a channel to receive notification from indexer
 	//and start a goroutine to listen to it
-	chnotify = make(chan ddlNotification)
-	go acceptIndexerNotification(chnotify)
+	mutationMgr.chddl = make(chan ddlNotification)
+	go mutationMgr.manageIndexerNotification()
+
+	//init the channel for incoming mutations
+	mutationMgr.chmutation = make(chan api.Mutation, MAX_INCOMING_QUEUE)
+	go mutationMgr.manageMutationQueue()
+
+	//init the workers for processing mutations
+	for w := 0; w < MAX_MUTATION_WORKERS; w++ {
+		mutationMgr.chworkers[w] = make(chan api.Mutation, MAX_WORKER_QUEUE)
+		go mutationMgr.startMutationWorker(w)
+	}
+
+	//init error state
+	indexerErrorState = false
+	indexerErrorString = ""
+	chdrain = make(chan bool)
 
 	//start the rpc server
 	if err = startRPCServer(); err != nil {
 		return nil, err
 	}
 
-	return chnotify, nil
+	return mutationMgr.chddl, nil
 }
 
 func startRPCServer() error {
@@ -210,21 +274,21 @@ func startRPCServer() error {
 
 }
 
-func acceptIndexerNotification(chnotify chan ddlNotification) {
+func (m *MutationManager) manageIndexerNotification() {
 
 	ok := true
 	var ddl ddlNotification
 	for ok {
-		ddl, ok = <-chnotify
+		ddl, ok = <-m.chddl
 		if ok {
 			switch ddl.ddltype {
 			case api.CREATE:
-				mutationMgr.enginemap[ddl.indexinfo.Uuid] = ddl.engine
+				m.enginemap[ddl.indexinfo.Uuid] = ddl.engine
 				//init sequence map of new index
 				var seqVec api.SequenceVector
-				mutationMgr.sequencemap[ddl.indexinfo.Uuid] = seqVec
+				m.sequencemap[ddl.indexinfo.Uuid] = seqVec
 			case api.DROP:
-				delete(mutationMgr.enginemap, ddl.indexinfo.Uuid)
+				delete(m.enginemap, ddl.indexinfo.Uuid)
 				//FIXME : Delete index entry from sequence map
 			default:
 				log.Printf("Mutation Manager Received Unsupported Notification %v", ddl.ddltype)
@@ -233,22 +297,39 @@ func acceptIndexerNotification(chnotify chan ddlNotification) {
 	}
 }
 
-func (m *MutationManager) manageSeqNotification(chseq chan seqNotification) {
+func (m *MutationManager) manageSeqNotification() {
 
-	ok := true
 	var seq seqNotification
+	openSeqCount := 0
+	ok := true
+
 	for ok {
-		seq, ok = <-chseq
-		if ok {
-			seqVector := m.sequencemap[seq.indexid]
-			seqVector[seq.vbucket] = seq.seqno
-			m.sequencemap[seq.indexid] = seqVector
-			jsonval, err := json.Marshal(m.sequencemap[seq.indexid])
-			if err != nil {
-				log.Printf("Error Marshalling SequenceMap %v", err)
-			} else {
-				m.enginemap[seq.indexid].InsertMeta(META_DOC_ID, string(jsonval))
+		select {
+		case seq, ok = <-m.chseq:
+			if ok {
+				seqVector, exists := m.sequencemap[seq.indexid]
+				if !exists {
+					log.Printf("IndexId %v not found in Sequence Vector. INCONSISTENT INDEXER STATE!!!", seq.indexid)
+					break
+				}
+				seqVector[seq.vbucket] = seq.seqno
+				m.sequencemap[seq.indexid] = seqVector
+				openSeqCount += 1
+				//persist only after SEQ_MAP_PERSIST_INTERVAL
+				if openSeqCount == SEQ_MAP_PERSIST_INTERVAL {
+					jsonval, err := json.Marshal(m.sequencemap[seq.indexid])
+					if err != nil {
+						log.Printf("Error Marshalling SequenceMap %v", err)
+					} else {
+						//FIXME - Handle Error here
+						m.enginemap[seq.indexid].InsertMeta(META_DOC_ID, string(jsonval))
+					}
+					openSeqCount = 0
+				}
 			}
+		case <-chdrain:
+			wg.Add(1)
+			m.drainSeqChannel(m.chseq)
 		}
 	}
 }
@@ -267,4 +348,52 @@ func (m *MutationManager) initSequenceMapFromPersistence() {
 		}
 		m.sequencemap[idx] = sequenceVector
 	}
+}
+
+func (m *MutationManager) initErrorState(err string) {
+
+	indexerErrorState = true
+	indexerErrorString = err
+
+	//send drain signal to mutation queue
+	chdrain <- true
+
+	//send drain signal to sequence queue
+	chdrain <- true
+
+	//send drain signal to worker queues
+	for w := 0; w < MAX_MUTATION_WORKERS; w++ {
+		chdrain <- true
+	}
+
+}
+
+func (m *MutationManager) drainMutationChannel(ch chan api.Mutation) {
+
+loop:
+	for {
+		select {
+		case <-ch:
+			continue
+		default:
+			break loop
+		}
+	}
+	wg.Done()
+
+}
+
+func (m *MutationManager) drainSeqChannel(ch chan seqNotification) {
+
+loop:
+	for {
+		select {
+		case <-ch:
+			continue
+		default:
+			break loop
+		}
+	}
+	wg.Done()
+
 }
