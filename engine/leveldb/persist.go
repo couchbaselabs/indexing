@@ -30,6 +30,7 @@ func Create(name string) (*LevelDBEngine, error) {
 	ldb.options.SetFilterPolicy(filterPolicy)
 
 	ldb.options.SetCompression(levigo.SnappyCompression)
+	ldb.options.SetMaxOpenFiles(500)
 
 	ldb.wo = levigo.NewWriteOptions()
 	ldb.ro = levigo.NewReadOptions()
@@ -61,6 +62,7 @@ func Open(name string) (*LevelDBEngine, error) {
 	ldb.options.SetFilterPolicy(filterPolicy)
 
 	ldb.options.SetCompression(levigo.SnappyCompression)
+	ldb.options.SetMaxOpenFiles(500)
 
 	ldb.wo = levigo.NewWriteOptions()
 	ldb.ro = levigo.NewReadOptions()
