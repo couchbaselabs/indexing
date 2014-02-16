@@ -21,9 +21,6 @@ import (
 	"net/rpc/jsonrpc"
 )
 
-// TODO: There can be a corner case where killStart could be closed by more
-// than one go-routines.
-
 type BucketWorkerCmd struct {
 	client     couchbase.Client
 	pool       *couchbase.Pool
@@ -31,7 +28,6 @@ type BucketWorkerCmd struct {
 	bmeta      *bucketMeta
 	nconn      int
 	rpcurl     string
-	quit       chan bool
 }
 
 type BucketWorker struct {
@@ -40,13 +36,11 @@ type BucketWorker struct {
 	bucketname string                      // bucket for which to open the feed
 	bmeta      *bucketMeta                 // bucket meta-data
 	mclients   map[string][]*indexerClient // rpc clients per index
-	quit       chan bool
 }
 
 type indexerClient struct {
 	client *rpc.Client
 	mch    chan *api.Mutation
-	quit   chan bool
 }
 
 func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
@@ -65,7 +59,6 @@ func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
 			s := &indexerClient{
 				client: jsonrpc.NewClient(rpcconn),
 				mch:    make(chan *api.Mutation, 1000),
-				quit:   bwc.quit,
 			}
 			iclients = append(iclients, s)
 		}
@@ -80,26 +73,28 @@ func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
 	}
 }
 
-func push2Indexer(s *indexerClient, killStart chan bool) {
+func push2Indexer(s *indexerClient, quit chan interface{}, kill chan bool) {
 	var r bool
 	var err error
+
+loop:
 	for {
 		select {
 		case m, ok := <-s.mch:
 			if ok {
 				err = s.client.Call(PROCESS_1MUTATION, *m, &r)
 			}
-		case <-s.quit:
-			return
+		case <-kill:
+			break loop
 		}
 		if err != nil {
-			close(killStart)
-			return
+			quit <- ExitRoutine{kill, err}
+			break
 		}
 	}
 }
 
-func (bw *BucketWorker) run(killStart chan bool) {
+func (bw *BucketWorker) run(quit chan interface{}, kill chan bool) {
 	var err error
 	var pool couchbase.Pool
 	var bucket *couchbase.Bucket
@@ -127,12 +122,6 @@ func (bw *BucketWorker) run(killStart chan bool) {
 		return true
 	})
 
-	for _, iclients := range bw.mclients {
-		for _, s := range iclients {
-			go push2Indexer(s, killStart)
-		}
-	}
-
 	// Open feed
 	bfeed := NewUprStreams(bucket)
 	if err := bfeed.openFeed(bw.bmeta.vector); err != nil {
@@ -146,6 +135,7 @@ loop:
 		select {
 		case e, ok := <-bfeed.feed.C:
 			if ok == false {
+				quit <- ExitRoutine{kill, nil}
 				break loop
 			}
 			for uuid, astexprs := range bw.bmeta.indexExprs {
@@ -166,17 +156,17 @@ loop:
 				x := int(e.Vbucket) % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
 			}
-		case <-bw.quit:
+		case <-kill:
 			break loop
 		}
 	}
 	bfeed.closeFeed()
+	// Close all connections with indexer.
 	for _, sl := range bw.mclients {
 		for _, s := range sl {
 			close(s.mch)
 		}
 	}
-	close(killStart)
 }
 
 func evaluate(value []byte, astexprs []ast.Expression) [][]byte {
