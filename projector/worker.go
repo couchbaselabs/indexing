@@ -21,6 +21,9 @@ import (
 	"net/rpc/jsonrpc"
 )
 
+// TODO: There can be a corner case where killStart could be closed by more
+// than one go-routines.
+
 type BucketWorkerCmd struct {
 	client     couchbase.Client
 	pool       *couchbase.Pool
@@ -65,7 +68,6 @@ func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
 				quit:   bwc.quit,
 			}
 			iclients = append(iclients, s)
-			go push2Indexer(s)
 		}
 		mclients[uuid] = iclients
 	}
@@ -78,15 +80,20 @@ func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
 	}
 }
 
-func push2Indexer(s *indexerClient) {
+func push2Indexer(s *indexerClient, killStart chan bool) {
 	var r bool
+	var err error
 	for {
 		select {
 		case m, ok := <-s.mch:
 			if ok {
-				s.client.Call(PROCESS_1MUTATION, *m, &r)
+				err = s.client.Call(PROCESS_1MUTATION, *m, &r)
 			}
 		case <-s.quit:
+			return
+		}
+		if err != nil {
+			close(killStart)
 			return
 		}
 	}
@@ -101,25 +108,31 @@ func (bw *BucketWorker) run(killStart chan bool) {
 		if bucket != nil {
 			bucket.Close()
 		}
-		for _, sl := range bw.mclients {
-			for _, s := range sl {
-				close(s.mch)
-			}
+	}
+
+	tryConnection(func() bool {
+		// Refresh the pool to get any new buckets created on the server.
+		if pool, err = bw.client.GetPool("default"); err != nil {
+			fmt.Println("Error getting pool", err)
+			finish()
+			return false
+		}
+		bw.pool = &pool
+		// Get bucket instance
+		if bucket, err = bw.pool.GetBucket(bw.bucketname); err != nil {
+			log.Printf("Unable to get bucket %v\n", bw.bucketname)
+			finish()
+			return false
+		}
+		return true
+	})
+
+	for _, iclients := range bw.mclients {
+		for _, s := range iclients {
+			go push2Indexer(s, killStart)
 		}
 	}
-	// Refresh the pool to get any new buckets created on the server.
-	if pool, err = bw.client.GetPool("default"); err != nil {
-		fmt.Println("Error getting pool", err)
-		finish()
-		return
-	}
-	bw.pool = &pool
-	// Get bucket instance
-	if bucket, err = bw.pool.GetBucket(bw.bucketname); err != nil {
-		log.Printf("Unable to get bucket %v\n", bw.bucketname)
-		finish()
-		return
-	}
+
 	// Open feed
 	bfeed := NewUprStreams(bucket)
 	if err := bfeed.openFeed(bw.bmeta.vector); err != nil {
@@ -131,7 +144,10 @@ func (bw *BucketWorker) run(killStart chan bool) {
 loop:
 	for {
 		select {
-		case e := <-bfeed.feed.C:
+		case e, ok := <-bfeed.feed.C:
+			if ok == false {
+				break loop
+			}
 			for uuid, astexprs := range bw.bmeta.indexExprs {
 				ii := bw.bmeta.indexMap[uuid]
 				m := api.Mutation{
@@ -146,7 +162,7 @@ loop:
 				} else if m.Type == api.INSERT {
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
-				//log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
+				log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
 				x := int(e.Vbucket) % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
 			}
@@ -155,7 +171,11 @@ loop:
 		}
 	}
 	bfeed.closeFeed()
-
+	for _, sl := range bw.mclients {
+		for _, s := range sl {
+			close(s.mch)
+		}
+	}
 	close(killStart)
 }
 

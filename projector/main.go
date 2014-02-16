@@ -21,6 +21,11 @@ import (
 // TODO:
 // [1] the node in which router runs will have to be mentioned in indexinfo
 //     structure. once that is available change the projector accordingly
+//
+// 1. Automatic reconnect when indexer fails and restarts.
+// 2. Randomly kill projector and restart must work from where the vuuid,seqno
+//    was left off.
+// 3. Try CREATE and DROP index multiple times.
 
 var options struct {
 	kvhost string
