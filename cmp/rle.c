@@ -33,7 +33,7 @@
  */
 rle_encode_error_t rle_enc_trd(sized_buf *in,
                                sized_buf **out) {
-    uint32_t len, new_len;
+    uint32_t len, cmp_len;
     char *bytes = NULL;
     char buf[256], curr, prev;
     uint8_t count;
@@ -50,10 +50,15 @@ rle_encode_error_t rle_enc_trd(sized_buf *in,
 
 rle_decode_error_t rle_dec_trd(sized_buf *in,
                                sized_buf **out){
-    uint32_t len;
+    uint32_t len, cmp_len;
+    char *bytes = NULL;
+    char buf[256], curr, prev;
+    uint8_t count;
     rle_decode_error_t errcode = RLE_DECODE_SUCCESS;
 
-    len = in->size;
+    len = in->orig_size;
+    cmp_len = in->cmp_size;
+
     if ((len <= 2)) {
         return errcode;
     }
@@ -68,10 +73,13 @@ rle_decode_error_t rle_dec_trd(sized_buf *in,
  */
 rle_encode_error_t rle_enc_pkb(sized_buf *in,
                                sized_buf **out){
-    uint32_t len;
+    uint32_t len, cmp_len;
+    char *bytes = NULL;
+    char buf[256], curr, prev;
+    uint8_t count;
     rle_encode_error_t errcode = RLE_ENCODE_SUCCESS;
 
-    len = in->size;
+    len = in->orig_size;
     if ((len <= 2)) {
         return errcode;
     }
@@ -82,10 +90,15 @@ rle_encode_error_t rle_enc_pkb(sized_buf *in,
 
 rle_decode_error_t rle_dec_pkb(sized_buf *in,
                                sized_buf **out) {
-    uint32_t len;
+    uint32_t len, cmp_len;
+    char *bytes = NULL;
+    char buf[256], curr, prev;
+    uint8_t count;
     rle_decode_error_t errcode = RLE_DECODE_SUCCESS;
 
-    len = in->size;
+    len = in->orig_size;
+    cmp_len = in->cmp_size;
+    
     if ((len <= 2)) {
         return errcode;
     }
