@@ -47,8 +47,21 @@ rle_encode_error_t rle_enc_trd(sized_buf *in,
         *out = in;
         return errcode;
     }
+    bytes = in->buf;
+    prev = in->buf[0];
+    in->buf++;
+    curr = in->buf[0];
+
     //to be finished
 
+    //TBD: finalize the value of cmp_size
+
+out:
+    //TBD: free unused space
+    in->buf = bytes;
+    //realloc()
+
+    *out = in;
     return errcode;
 }
 
