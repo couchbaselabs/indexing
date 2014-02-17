@@ -22,7 +22,7 @@ import (
 const initialRetryInterval = 1 * time.Second
 const maximumRetryInterval = 30 * time.Second
 
-func (p *projectorInfo) getMetaData() (err error) {
+func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
 	var rpcconn net.Conn
 	var returnMap api.IndexSequenceMap
 	var indexinfos []api.IndexInfo
@@ -31,7 +31,7 @@ func (p *projectorInfo) getMetaData() (err error) {
 	bmap := make(bucketMap)
 	tryConnection(func() bool {
 		// Create a map of indexinfos structured around buckets.
-		if p.serverUuid, indexinfos, err = p.imanager.List(""); err != nil {
+		if serverUuid, indexinfos, err = p.imanager.List(""); err != nil {
 			log.Println("Error getting list:", err)
 			return false
 		}
@@ -83,22 +83,19 @@ func (p *projectorInfo) getMetaData() (err error) {
 		return true
 	})
 	p.buckets = bmap
-	return
+	return serverUuid, nil
 }
 
-func (p *projectorInfo) waitNotify(notifych chan string) {
+func (p *projectorInfo) waitNotify(serverUuid string, quit chan interface{}) {
 	var err error
-	if _, p.serverUuid, err = p.imanager.Notify(p.serverUuid); err != nil {
+	if _, serverUuid, err = p.imanager.Notify(serverUuid); err != nil {
 		log.Println("Index manager closed connection:", err)
 	}
-	notifych <- p.serverUuid
-	close(notifych)
+	quit <- ImNotify{serverUuid}
 	log.Println("Projector exiting wait-notify")
 }
 
 func (p *projectorInfo) close() {
-	// TODO: index_manager/client/client.go should implement Close() api.
-	// p.imanager.Close()
 }
 
 func tryConnection(fn func() bool) {

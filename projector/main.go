@@ -21,6 +21,11 @@ import (
 // TODO:
 // [1] the node in which router runs will have to be mentioned in indexinfo
 //     structure. once that is available change the projector accordingly
+//
+// 1. Automatic reconnect when indexer fails and restarts.
+// 2. Randomly kill projector and restart must work from where the vuuid,seqno
+//    was left off.
+// 3. Try CREATE and DROP index multiple times.
 
 var options struct {
 	kvhost string
@@ -42,6 +47,15 @@ type bucketMeta struct {
 	indexExprs map[string][]ast.Expression
 }
 type bucketMap map[string]*bucketMeta
+
+// Supervisor messages
+type ImNotify struct {
+	serverUuid string
+}
+type ExitRoutine struct {
+	kill chan bool
+	err  error
+}
 
 type projectorInfo struct {
 	imanager   *imclient.RestClient
@@ -69,10 +83,12 @@ func main() {
 	p := &projectorInfo{
 		imanager: imclient.NewRestClient("http://" + options.imhost),
 	}
+	superch := make(chan interface{})
 	for {
-		killStart := make(chan bool)
-		q := make(chan bool)
-		p.getMetaData()
+		workers := make([]chan bool, 0)
+		if p.serverUuid, err = p.getMetaData(); err != nil {
+			continue
+		}
 		for bucket, bmeta := range p.buckets {
 			bw := NewBucketWorker(BucketWorkerCmd{
 				client:     couch,
@@ -81,18 +97,38 @@ func main() {
 				bmeta:      bmeta,
 				nconn:      options.nconn,
 				rpcurl:     options.inhost,
-				quit:       q,
 			})
-			go bw.run(killStart)
+			// Workers to push mutations to indexer through parallel connection
+			for _, iclients := range bw.mclients {
+				for _, s := range iclients {
+					killch := make(chan bool)
+					go push2Indexer(s, superch, killch)
+					workers = append(workers, killch)
+				}
+			}
+			// Workers to gather UprEvents from upr-feed.
+			killch := make(chan bool)
+			go bw.run(superch, killch)
+			workers = append(workers, killch)
 		}
-		notifych := make(chan string)
-		go p.waitNotify(notifych)
+		go p.waitNotify(p.serverUuid, superch)
 		select {
-		case <-notifych:
-		case <-killStart:
+		case msg, _ := <-superch:
+			if notify, ok := msg.(ImNotify); ok {
+				p.serverUuid = notify.serverUuid
+			} else if _, ok := msg.(ExitRoutine); ok {
+				// TODO: Log this ???
+			} else {
+				panic("Unknown supervisor message")
+			}
 		}
-		close(q)
+		// Kill all workers
+		for _, ch := range workers {
+			close(ch)
+		}
 	}
+	// TODO: index_manager/client/client.go should implement Close() api.
+	// p.imanager.Close()
 	p.close()
 }
 

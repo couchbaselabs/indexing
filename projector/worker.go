@@ -28,7 +28,6 @@ type BucketWorkerCmd struct {
 	bmeta      *bucketMeta
 	nconn      int
 	rpcurl     string
-	quit       chan bool
 }
 
 type BucketWorker struct {
@@ -37,13 +36,11 @@ type BucketWorker struct {
 	bucketname string                      // bucket for which to open the feed
 	bmeta      *bucketMeta                 // bucket meta-data
 	mclients   map[string][]*indexerClient // rpc clients per index
-	quit       chan bool
 }
 
 type indexerClient struct {
 	client *rpc.Client
 	mch    chan *api.Mutation
-	quit   chan bool
 }
 
 func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
@@ -62,10 +59,8 @@ func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
 			s := &indexerClient{
 				client: jsonrpc.NewClient(rpcconn),
 				mch:    make(chan *api.Mutation, 1000),
-				quit:   bwc.quit,
 			}
 			iclients = append(iclients, s)
-			go push2Indexer(s)
 		}
 		mclients[uuid] = iclients
 	}
@@ -78,21 +73,28 @@ func NewBucketWorker(bwc BucketWorkerCmd) *BucketWorker {
 	}
 }
 
-func push2Indexer(s *indexerClient) {
+func push2Indexer(s *indexerClient, quit chan interface{}, kill chan bool) {
 	var r bool
+	var err error
+
+loop:
 	for {
 		select {
 		case m, ok := <-s.mch:
 			if ok {
-				s.client.Call(PROCESS_1MUTATION, *m, &r)
+				err = s.client.Call(PROCESS_1MUTATION, *m, &r)
 			}
-		case <-s.quit:
-			return
+		case <-kill:
+			break loop
+		}
+		if err != nil {
+			quit <- ExitRoutine{kill, err}
+			break
 		}
 	}
 }
 
-func (bw *BucketWorker) run(killStart chan bool) {
+func (bw *BucketWorker) run(quit chan interface{}, kill chan bool) {
 	var err error
 	var pool couchbase.Pool
 	var bucket *couchbase.Bucket
@@ -101,25 +103,25 @@ func (bw *BucketWorker) run(killStart chan bool) {
 		if bucket != nil {
 			bucket.Close()
 		}
-		for _, sl := range bw.mclients {
-			for _, s := range sl {
-				close(s.mch)
-			}
+	}
+
+	tryConnection(func() bool {
+		// Refresh the pool to get any new buckets created on the server.
+		if pool, err = bw.client.GetPool("default"); err != nil {
+			fmt.Println("Error getting pool", err)
+			finish()
+			return false
 		}
-	}
-	// Refresh the pool to get any new buckets created on the server.
-	if pool, err = bw.client.GetPool("default"); err != nil {
-		fmt.Println("Error getting pool", err)
-		finish()
-		return
-	}
-	bw.pool = &pool
-	// Get bucket instance
-	if bucket, err = bw.pool.GetBucket(bw.bucketname); err != nil {
-		log.Printf("Unable to get bucket %v\n", bw.bucketname)
-		finish()
-		return
-	}
+		bw.pool = &pool
+		// Get bucket instance
+		if bucket, err = bw.pool.GetBucket(bw.bucketname); err != nil {
+			log.Printf("Unable to get bucket %v\n", bw.bucketname)
+			finish()
+			return false
+		}
+		return true
+	})
+
 	// Open feed
 	bfeed := NewUprStreams(bucket)
 	if err := bfeed.openFeed(bw.bmeta.vector); err != nil {
@@ -131,7 +133,11 @@ func (bw *BucketWorker) run(killStart chan bool) {
 loop:
 	for {
 		select {
-		case e := <-bfeed.feed.C:
+		case e, ok := <-bfeed.feed.C:
+			if ok == false {
+				quit <- ExitRoutine{kill, nil}
+				break loop
+			}
 			for uuid, astexprs := range bw.bmeta.indexExprs {
 				ii := bw.bmeta.indexMap[uuid]
 				m := api.Mutation{
@@ -146,17 +152,21 @@ loop:
 				} else if m.Type == api.INSERT {
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
-				//log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
+				log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
 				x := int(e.Vbucket) % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
 			}
-		case <-bw.quit:
+		case <-kill:
 			break loop
 		}
 	}
 	bfeed.closeFeed()
-
-	close(killStart)
+	// Close all connections with indexer.
+	for _, sl := range bw.mclients {
+		for _, s := range sl {
+			close(s.mch)
+		}
+	}
 }
 
 func evaluate(value []byte, astexprs []ast.Expression) [][]byte {
