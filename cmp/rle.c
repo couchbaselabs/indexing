@@ -41,6 +41,9 @@ rle_encode_error_t rle_enc_trd(sized_buf *in,
 
     len = in->org_size;
     if ((len <= 2)) {
+        //no cmp is needed
+        in->cmp_size = len;
+        *out = in;
         return errcode;
     }
     //to be finished
@@ -60,6 +63,8 @@ rle_decode_error_t rle_dec_trd(sized_buf *in,
     cmp_len = in->cmp_size;
 
     if ((len <= 2)) {
+        //nothing is cmped
+        *out = in;
         return errcode;
     }
     //to be finished
@@ -81,6 +86,9 @@ rle_encode_error_t rle_enc_pkb(sized_buf *in,
 
     len = in->orig_size;
     if ((len <= 2)) {
+        //no cmp is needed
+        in->cmp_size = len;
+        *out = in;
         return errcode;
     }
     //to be finished
@@ -100,6 +108,8 @@ rle_decode_error_t rle_dec_pkb(sized_buf *in,
     cmp_len = in->cmp_size;
     
     if ((len <= 2)) {
+        //nothing is cmped
+        *out = in;
         return errcode;
     }
     //to be finished
