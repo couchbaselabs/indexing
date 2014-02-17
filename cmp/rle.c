@@ -33,10 +33,13 @@
  */
 rle_encode_error_t rle_enc_trd(sized_buf *in,
                                sized_buf **out) {
-    uint32_t len;
+    uint32_t len, new_len;
+    char *bytes = NULL;
+    char buf[256], curr, prev;
+    uint8_t count;
     rle_encode_error_t errcode = RLE_ENCODE_SUCCESS;
 
-    len = in->size;
+    len = in->org_size;
     if ((len <= 2)) {
         return errcode;
     }
