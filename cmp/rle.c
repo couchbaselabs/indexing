@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 #include "rle.h"
 
 /* for compression, use inline compression as much as possible
@@ -36,7 +37,7 @@ rle_encode_error_t rle_enc_trd(sized_buf *in,
     uint32_t len, cmp_len;
     char *bytes = NULL;
     char buf[256], curr, prev;
-    uint8_t count;
+    unsigned char count; //UCHAR_MAX is the limit
     rle_encode_error_t errcode = RLE_ENCODE_SUCCESS;
 
     len = in->org_size;
@@ -56,7 +57,7 @@ rle_decode_error_t rle_dec_trd(sized_buf *in,
     uint32_t len, cmp_len;
     char *bytes = NULL;
     char buf[256], curr, prev;
-    uint8_t count;
+    unsigned char count;
     rle_decode_error_t errcode = RLE_DECODE_SUCCESS;
 
     len = in->orig_size;
@@ -81,7 +82,7 @@ rle_encode_error_t rle_enc_pkb(sized_buf *in,
     uint32_t len, cmp_len;
     char *bytes = NULL;
     char buf[256], curr, prev;
-    uint8_t count;
+    unsigned char count;
     rle_encode_error_t errcode = RLE_ENCODE_SUCCESS;
 
     len = in->orig_size;
@@ -101,7 +102,7 @@ rle_decode_error_t rle_dec_pkb(sized_buf *in,
     uint32_t len, cmp_len;
     char *bytes = NULL;
     char buf[256], curr, prev;
-    uint8_t count;
+    unsigned char count;
     rle_decode_error_t errcode = RLE_DECODE_SUCCESS;
 
     len = in->orig_size;
