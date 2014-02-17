@@ -47,12 +47,23 @@ rle_encode_error_t rle_enc_trd(sized_buf *in,
         *out = in;
         return errcode;
     }
+    cmp_len = 0;
+    count = 0;
     bytes = in->buf;
     prev = in->buf[0];
+    cmp_len++;
+    len--;
     in->buf++;
     curr = in->buf[0];
-
+    cmp_len++;
+    len--;
+    while (len >0) {
     //to be finished
+
+
+
+    }
+
 
     //TBD: finalize the value of cmp_size
 
