@@ -57,7 +57,7 @@ rle_encode_error_t rle_enc_trd(sized_buf *in,
     curr = in->buf[0];
     cmp_len++;
     len--;
-    while (len >0) {
+    while (len > 0) {
     //to be finished
 
 
