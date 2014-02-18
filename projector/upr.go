@@ -53,26 +53,16 @@ func makeUprStream(seqVector api.SequenceVector,
 	uprstreams := make(map[uint16]*couchbase.UprStream)
 	for vbno, flog := range flogs {
 		vb := uint16(vbno)
-		vuuid, startSeq, highSeq := calculateVector(seqVector[vb], flog)
+		vuuid, startSeq, highSeq := couchbase.CalculateVector(seqVector[vb], flog)
 		uprstream := &couchbase.UprStream{
 			Vbucket:  vb,
 			Vuuid:    vuuid,
 			Startseq: startSeq,
 			Highseq:  highSeq,
 			Endseq:   0xFFFFFFFFFFFFFFFF,
+			Flog:     flog,
 		}
 		uprstreams[vb] = uprstream
 	}
 	return uprstreams
-}
-
-func calculateVector(
-	lastSeq uint64, flog couchbase.FailoverLog) (uint64, uint64, uint64) {
-
-	for _, log := range flog {
-		if lastSeq >= log[1] {
-			return log[0], lastSeq, log[1]
-		}
-	}
-	return flog[0][0], flog[0][1], flog[0][1]
 }

@@ -116,8 +116,8 @@ func main() {
 		case msg, _ := <-superch:
 			if notify, ok := msg.(ImNotify); ok {
 				p.serverUuid = notify.serverUuid
-			} else if _, ok := msg.(ExitRoutine); ok {
-				// TODO: Log this ???
+			} else if exit, ok := msg.(ExitRoutine); ok {
+				log.Println(exit.err)
 			} else {
 				panic("Unknown supervisor message")
 			}
