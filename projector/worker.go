@@ -130,6 +130,7 @@ func (bw *BucketWorker) run(quit chan interface{}, kill chan bool) {
 		return
 	}
 
+	count := 0
 loop:
 	for {
 		select {
@@ -152,9 +153,10 @@ loop:
 				} else if m.Type == api.INSERT {
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
-				log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
-				x := int(e.Vbucket) % len(bw.mclients[uuid])
+				//log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
+				x := count % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
+				count++
 			}
 		case <-kill:
 			break loop
