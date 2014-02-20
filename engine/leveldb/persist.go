@@ -102,13 +102,13 @@ func (ldb *LevelDBEngine) InsertMutation(k api.Key, v api.Value) error {
 	}
 	//FIXME : Handle the case if old-value from backindex matches with the new-value(false mutation). Skip It.
 
-	//set in main index
-	if err = ldb.c.Put(ldb.wo, k.EncodedBytes(), v.EncodedBytes()); err != nil {
+	//set the back index entry <docid, encodedkey>
+	if err = ldb.b.Put(ldb.wo, []byte(v.Docid()), k.EncodedBytes()); err != nil {
 		return err
 	}
 
-	//set the back index entry <docid, encodedkey>
-	if err = ldb.b.Put(ldb.wo, []byte(v.Docid()), k.EncodedBytes()); err != nil {
+	//set in main index
+	if err = ldb.c.Put(ldb.wo, k.EncodedBytes(), v.EncodedBytes()); err != nil {
 		return err
 	}
 
