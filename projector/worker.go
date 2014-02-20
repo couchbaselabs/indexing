@@ -154,7 +154,8 @@ loop:
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
 				//log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
-				x := int(e.Vbucket) % len(bw.mclients[uuid])
+				//x := int(e.Vbucket) % len(bw.mclients[uuid])
+				x := count % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
 				count++
 			}
