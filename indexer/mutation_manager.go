@@ -24,10 +24,10 @@ import (
 type MutationManager struct {
 	enginemap   map[string]api.Finder
 	sequencemap api.IndexSequenceMap
-	chmutation  chan api.Mutation                       //buffered channel to store incoming mutations
-	chworkers   [MAX_MUTATION_WORKERS]chan api.Mutation //buffered channel for each worker
-	chseq       chan seqNotification                    //buffered channel to store sequence notifications from workers
-	chddl       chan ddlNotification                    //channel for incoming ddl notifications
+	chmutation  chan *api.Mutation                       //buffered channel to store incoming mutations
+	chworkers   [MAX_MUTATION_WORKERS]chan *api.Mutation //buffered channel for each worker
+	chseq       chan seqNotification                     //buffered channel to store sequence notifications from workers
+	chddl       chan ddlNotification                     //channel for incoming ddl notifications
 }
 
 type ddlNotification struct {
@@ -109,7 +109,7 @@ func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *b
 	}
 
 	//copy the mutation data and return
-	m.chmutation <- *mutation
+	m.chmutation <- mutation
 	*reply = true
 	return nil
 
@@ -148,7 +148,7 @@ func (m *MutationManager) startMutationWorker(workerId int) {
 	}
 }
 
-func (m *MutationManager) handleMutation(mutation api.Mutation) {
+func (m *MutationManager) handleMutation(mutation *api.Mutation) {
 
 	if mutation.Type == api.INSERT {
 
@@ -224,12 +224,12 @@ func StartMutationManager(engineMap map[string]api.Finder) (chan ddlNotification
 	go mutationMgr.manageIndexerNotification()
 
 	//init the channel for incoming mutations
-	mutationMgr.chmutation = make(chan api.Mutation, MAX_INCOMING_QUEUE)
+	mutationMgr.chmutation = make(chan *api.Mutation, MAX_INCOMING_QUEUE)
 	go mutationMgr.manageMutationQueue()
 
 	//init the workers for processing mutations
 	for w := 0; w < MAX_MUTATION_WORKERS; w++ {
-		mutationMgr.chworkers[w] = make(chan api.Mutation, MAX_WORKER_QUEUE)
+		mutationMgr.chworkers[w] = make(chan *api.Mutation, MAX_WORKER_QUEUE)
 		go mutationMgr.startMutationWorker(w)
 	}
 
@@ -368,7 +368,7 @@ func (m *MutationManager) initErrorState(err string) {
 
 }
 
-func (m *MutationManager) drainMutationChannel(ch chan api.Mutation) {
+func (m *MutationManager) drainMutationChannel(ch chan *api.Mutation) {
 
 loop:
 	for {
