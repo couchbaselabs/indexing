@@ -236,7 +236,7 @@ type Mutation struct {
 type IndexList []string
 
 //sequence number for each of 1024 vbuckets
-type SequenceVector [MAX_VBUCKETS]uint64
+type SequenceVector []uint64
 
 //map of <Index, SequenceVector>
 type IndexSequenceMap map[string]SequenceVector // indexed with index-uuid

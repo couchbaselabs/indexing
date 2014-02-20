@@ -285,7 +285,7 @@ func (m *MutationManager) manageIndexerNotification() {
 			case api.CREATE:
 				m.enginemap[ddl.indexinfo.Uuid] = ddl.engine
 				//init sequence map of new index
-				var seqVec api.SequenceVector
+				seqVec := make(api.SequenceVector, api.MAX_VBUCKETS)
 				m.sequencemap[ddl.indexinfo.Uuid] = seqVec
 			case api.DROP:
 				delete(m.enginemap, ddl.indexinfo.Uuid)
