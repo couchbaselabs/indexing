@@ -323,13 +323,7 @@ func (m *MutationManager) manageSeqNotification() {
 				openSeqCount += 1
 				//persist only after SEQ_MAP_PERSIST_INTERVAL
 				if openSeqCount == SEQ_MAP_PERSIST_INTERVAL {
-					jsonval, err := json.Marshal(m.sequencemap[seq.indexid])
-					if err != nil {
-						log.Printf("Error Marshalling SequenceMap %v", err)
-					} else {
-						//FIXME - Handle Error here
-						m.enginemap[seq.indexid].InsertMeta(META_DOC_ID, string(jsonval))
-					}
+					m.persistSequenceMap()
 					openSeqCount = 0
 				}
 			}
@@ -353,6 +347,19 @@ func (m *MutationManager) initSequenceMapFromPersistence() {
 			log.Printf("Error unmarshalling SequenceVector %v", err)
 		}
 		m.sequencemap[idx] = sequenceVector
+	}
+}
+
+func (m *MutationManager) persistSequenceMap() {
+
+	for idx, seqm := range m.sequencemap {
+		jsonval, err := json.Marshal(seqm)
+		if err != nil {
+			log.Printf("Error Marshalling SequenceMap %v", err)
+		} else {
+			//FIXME - Handle Error here
+			m.enginemap[idx].InsertMeta(META_DOC_ID, string(jsonval))
+		}
 	}
 }
 
