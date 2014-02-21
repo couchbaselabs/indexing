@@ -19,3 +19,5 @@ var (
 	DDocCreateFailed = errors.New("Unable to create design doc for index")
 	ExprNotSupported = errors.New("Expression type is not supported")
 )
+
+var DebugLog bool

@@ -86,7 +86,9 @@ func (ldb *LevelDBEngine) InsertMutation(k api.Key, v api.Value) error {
 	var err error
 	var backkey api.Key
 
-	log.Printf("LevelDB Set Key - %s Value - %s", k.String(), v.String())
+	if api.DebugLog {
+		log.Printf("LevelDB Set Key - %s Value - %s", k.String(), v.String())
+	}
 
 	//check if the docid exists in the back index
 	if backkey, err = ldb.GetBackIndexEntry(v.Docid()); err != nil {
@@ -117,7 +119,10 @@ func (ldb *LevelDBEngine) InsertMutation(k api.Key, v api.Value) error {
 
 func (ldb *LevelDBEngine) InsertMeta(metaid string, metavalue string) error {
 
-	log.Printf("LevelDB Set Meta Key - %s, Value - %s", metaid, metavalue)
+	if api.DebugLog {
+		log.Printf("LevelDB Set Meta Key - %s, Value - %s", metaid, metavalue)
+	}
+
 	var err error
 
 	//meta values go to the back index
@@ -133,7 +138,9 @@ func (ldb *LevelDBEngine) GetMeta(metaid string) (string, error) {
 	var metavalue []byte
 	var err error
 	if metavalue, err = ldb.b.Get(ldb.ro, []byte(metaid)); err == nil {
-		log.Printf("LevelDB Get Meta Key - %s, Value - %s", metaid, string(metavalue))
+		if api.DebugLog {
+			log.Printf("LevelDB Get Meta Key - %s, Value - %s", metaid, string(metavalue))
+		}
 		return string(metavalue), nil
 	}
 
@@ -146,7 +153,9 @@ func (ldb *LevelDBEngine) GetBackIndexEntry(docid string) (api.Key, error) {
 	var kbyte []byte
 	var err error
 
-	log.Printf("LevelDB Get BackIndex Key - %s", docid)
+	if api.DebugLog {
+		log.Printf("LevelDB Get BackIndex Key - %s", docid)
+	}
 
 	if kbyte, err = ldb.b.Get(ldb.ro, []byte(docid)); err != nil {
 		return k, err
@@ -159,7 +168,9 @@ func (ldb *LevelDBEngine) GetBackIndexEntry(docid string) (api.Key, error) {
 
 func (ldb *LevelDBEngine) DeleteMutation(docid string) error {
 
-	log.Printf("LevelDB Delete Key - %s", docid)
+	if api.DebugLog {
+		log.Printf("LevelDB Delete Key - %s", docid)
+	}
 	var backkey api.Key
 	var err error
 
@@ -227,7 +238,9 @@ func (ldb *LevelDBEngine) GetKeySetForKeyRange(low api.Key, high api.Key,
 	it := ldb.c.NewIterator(ro)
 	defer it.Close()
 
-	log.Printf("LevelDB Received Key Low - %s High - %s for Scan", low.String(), high.String())
+	if api.DebugLog {
+		log.Printf("LevelDB Received Key Low - %s High - %s for Scan", low.String(), high.String())
+	}
 
 	var lowkey []byte
 	var err error
@@ -245,7 +258,9 @@ func (ldb *LevelDBEngine) GetKeySetForKeyRange(low api.Key, high api.Key,
 			continue
 		}
 
-		log.Printf("LevelDB Got Key - %s", key.String())
+		if api.DebugLog {
+			log.Printf("LevelDB Got Key - %s", key.String())
+		}
 
 		var highcmp int
 		if high.EncodedBytes() == nil {
@@ -262,20 +277,30 @@ func (ldb *LevelDBEngine) GetKeySetForKeyRange(low api.Key, high api.Key,
 		}
 
 		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
-			log.Printf("LevelDB Sending Key Equal to High Key")
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Key Equal to High Key")
+			}
 			chkey <- key
 		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
-			log.Printf("LevelDB Sending Key Equal to Low Key")
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Key Equal to Low Key")
+			}
 			chkey <- key
 		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
 			if highcmp == -1 {
-				log.Printf("LevelDB Sending Key Lesser Than High Key")
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Key Lesser Than High Key")
+				}
 			} else if lowcmp == 1 {
-				log.Printf("LevelDB Sending Key Greater Than Low Key")
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Key Greater Than Low Key")
+				}
 			}
 			chkey <- key
 		} else {
-			log.Printf("LevelDB not Sending Key")
+			if api.DebugLog {
+				log.Printf("LevelDB not Sending Key")
+			}
 			//if we have reached past the high key, no need to scan further
 			if highcmp == 1 {
 				break
@@ -308,7 +333,9 @@ func (ldb *LevelDBEngine) GetValueSetForKeyRange(low api.Key, high api.Key,
 	it := ldb.c.NewIterator(ro)
 	defer it.Close()
 
-	log.Printf("LevelDB Received Key Low - %s High - %s Inclusion - %v for Scan", low.String(), high.String(), inclusion)
+	if api.DebugLog {
+		log.Printf("LevelDB Received Key Low - %s High - %s Inclusion - %v for Scan", low.String(), high.String(), inclusion)
+	}
 
 	var lowkey []byte
 	var err error
@@ -332,7 +359,9 @@ func (ldb *LevelDBEngine) GetValueSetForKeyRange(low api.Key, high api.Key,
 			continue
 		}
 
-		log.Printf("LevelDB Got Value - %s", val.String())
+		if api.DebugLog {
+			log.Printf("LevelDB Got Value - %s", val.String())
+		}
 
 		var highcmp int
 		if high.EncodedBytes() == nil {
@@ -349,20 +378,30 @@ func (ldb *LevelDBEngine) GetValueSetForKeyRange(low api.Key, high api.Key,
 		}
 
 		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
-			log.Printf("LevelDB Sending Value Equal to High Key")
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to High Key")
+			}
 			chval <- val
 		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
-			log.Printf("LevelDB Sending Value Equal to Low Key")
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to Low Key")
+			}
 			chval <- val
 		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
 			if highcmp == -1 {
-				log.Printf("LevelDB Sending Value Lesser Than High Key")
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Lesser Than High Key")
+				}
 			} else if lowcmp == 1 {
-				log.Printf("LevelDB Sending Value Greater Than Low Key")
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Greater Than Low Key")
+				}
 			}
 			chval <- val
 		} else {
-			log.Printf("LevelDB not Sending Value")
+			if api.DebugLog {
+				log.Printf("LevelDB not Sending Value")
+			}
 			//if we have reached past the high key, no need to scan further
 			if highcmp == 1 {
 				break
@@ -394,7 +433,9 @@ func (ldb *LevelDBEngine) CountRange(low api.Key, high api.Key, inclusion api.In
 	it := ldb.c.NewIterator(ro)
 	defer it.Close()
 
-	log.Printf("LevelDB Received Key Low - %s High - %s for Scan", low.String(), high.String())
+	if api.DebugLog {
+		log.Printf("LevelDB Received Key Low - %s High - %s for Scan", low.String(), high.String())
+	}
 
 	var lowkey []byte
 	var err error
@@ -412,7 +453,9 @@ func (ldb *LevelDBEngine) CountRange(low api.Key, high api.Key, inclusion api.In
 			continue
 		}
 
-		log.Printf("LevelDB Got Key - %s", key.String())
+		if api.DebugLog {
+			log.Printf("LevelDB Got Key - %s", key.String())
+		}
 
 		var highcmp int
 		if high.EncodedBytes() == nil {
@@ -429,20 +472,30 @@ func (ldb *LevelDBEngine) CountRange(low api.Key, high api.Key, inclusion api.In
 		}
 
 		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
-			log.Printf("LevelDB Sending Value Equal to High Key")
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to High Key")
+			}
 			count++
 		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
-			log.Printf("LevelDB Sending Value Equal to Low Key")
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to Low Key")
+			}
 			count++
 		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
 			if highcmp == -1 {
-				log.Printf("LevelDB Sending Value Lesser Than High Key")
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Lesser Than High Key")
+				}
 			} else if lowcmp == 1 {
-				log.Printf("LevelDB Sending Value Greater Than Low Key")
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Greater Than Low Key")
+				}
 			}
 			count++
 		} else {
-			log.Printf("LevelDB not Sending Value")
+			if api.DebugLog {
+				log.Printf("LevelDB not Sending Value")
+			}
 			//if we have reached past the high key, no need to scan further
 			if highcmp == 1 {
 				break

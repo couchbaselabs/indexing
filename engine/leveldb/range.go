@@ -58,7 +58,9 @@ func (ldb *LevelDBEngine) Lookup(key api.Key) (chan api.Value, chan error) {
 	chval := make(chan api.Value)
 	cherr := make(chan error)
 
-	log.Printf("Received Lookup Query for Key %s", key.String())
+	if api.DebugLog {
+		log.Printf("Received Lookup Query for Key %s", key.String())
+	}
 	go ldb.GetValueSetForKeyRange(key, key, api.Both, chval, cherr)
 	return chval, cherr
 }

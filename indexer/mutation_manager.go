@@ -77,7 +77,9 @@ func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api
 	//if indexList is nil, return the complete map
 	if len(indexList) == 0 {
 		*reply = m.sequencemap
-		log.Printf("Mutation Manager returning complete SequenceMap")
+		if options.debugLog {
+			log.Printf("Mutation Manager returning complete SequenceMap %v", m.sequencemap)
+		}
 		return nil
 	}
 
@@ -91,7 +93,9 @@ func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api
 		}
 
 		//add to the reply map
-		log.Printf("Mutation Manager returning sequence vector for index %v", idx)
+		if options.debugLog {
+			log.Printf("Mutation Manager returning sequence vector for index %v %v", idx, v)
+		}
 		replyMap[idx] = v
 	}
 	*reply = replyMap
@@ -101,7 +105,9 @@ func (m *MutationManager) GetSequenceVectors(indexList api.IndexList, reply *api
 
 //This method takes as input an api.Mutation and copies into mutation queue for processing
 func (m *MutationManager) ProcessSingleMutation(mutation *api.Mutation, reply *bool) error {
-	//	log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
+	if options.debugLog {
+		log.Printf("Received Mutation Type %s Indexid %v, Docid %v, Vbucket %v, Seqno %v", mutation.Type, mutation.Indexid, mutation.Docid, mutation.Vbucket, mutation.Seqno)
+	}
 
 	//if there is any pending error, reply with that. This will force a handshake again.
 	if indexerErrorState == true {

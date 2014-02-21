@@ -17,6 +17,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
@@ -31,8 +32,14 @@ var ddlLock sync.Mutex
 var chnotify chan ddlNotification
 var engineMap map[string]api.Finder
 
+var options struct {
+	debugLog bool
+}
+
 func main() {
 	var err error
+
+	argParse()
 
 	// Create index catalog
 	if c, err = catalog.NewIndexCatalog("./", "icatalog.dat"); err != nil {
@@ -146,7 +153,9 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	uuid := indexreq.Index.Uuid
 	q := indexreq.Params
 
-	log.Printf("Received Scan Index %v Params %v %v", uuid, q.Low, q.High)
+	if options.debugLog {
+		log.Printf("Received Scan Index %v Params %v %v", uuid, q.Low, q.High)
+	}
 
 	// Scan
 	rows := make([]api.IndexRow, 0)
@@ -254,7 +263,9 @@ func lookupQuery(indexinfo *api.IndexInfo, key api.Key, limit int64) (
 	[]api.IndexRow, error) {
 
 	if looker, ok := engineMap[indexinfo.Uuid].(api.Looker); ok {
-		log.Printf("Looking up key %s", key.String())
+		if options.debugLog {
+			log.Printf("Looking up key %s", key.String())
+		}
 		ch, cherr := looker.Lookup(key)
 		return receiveValue(ch, cherr, limit)
 	}
@@ -324,7 +335,9 @@ func receiveValue(ch chan api.Value, cherr chan error, limit int64) (
 		select {
 		case value, ok = <-ch:
 			if ok {
-				log.Printf("Indexer Received Value %s", value.String())
+				if options.debugLog {
+					log.Printf("Indexer Received Value %s", value.String())
+				}
 				row := api.IndexRow{
 					Key:   value.KeyBytes(),
 					Value: value.Docid(),
@@ -427,4 +440,10 @@ func closeIndexEngines() error {
 	}
 
 	return nil
+}
+
+func argParse() {
+	flag.BoolVar(&options.debugLog, "debugLog", false, "Debug Logging Enabled")
+	flag.Parse()
+	api.DebugLog = options.debugLog
 }
