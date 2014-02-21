@@ -10,7 +10,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/couchbaselabs/dparval"
 	"github.com/couchbaselabs/indexing/api"
 	ast "github.com/couchbaselabs/tuqtng/ast"
@@ -108,7 +107,7 @@ func (bw *BucketWorker) run(quit chan interface{}, kill chan bool) {
 	tryConnection(func() bool {
 		// Refresh the pool to get any new buckets created on the server.
 		if pool, err = bw.client.GetPool("default"); err != nil {
-			fmt.Println("Error getting pool", err)
+			log.Println("Error getting pool", err)
 			finish()
 			return false
 		}
@@ -154,10 +153,13 @@ loop:
 					m.SecondaryKey = evaluate(e.Value, astexprs)
 				}
 				//log.Println(e.Opstr, e.Seqno, uuid[:8], bw.bucketname, m.Docid, fmtSKey(m.SecondaryKey))
-				//x := int(e.Vbucket) % len(bw.mclients[uuid])
-				x := count % len(bw.mclients[uuid])
+				x := int(e.Vbucket) % len(bw.mclients[uuid])
+				//x := count % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
 				count++
+				if count%10000 == 0 {
+					log.Println("Count:", count)
+				}
 			}
 		case <-kill:
 			break loop
