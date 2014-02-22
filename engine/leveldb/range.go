@@ -11,6 +11,7 @@ package leveldb
 
 import (
 	"github.com/couchbaselabs/indexing/api"
+	"github.com/jmhodges/levigo"
 	"log"
 )
 
@@ -106,4 +107,295 @@ func (ldb *LevelDBEngine) ValueRange(low, high api.Key, inclusion api.Inclusion)
 
 	go ldb.GetValueSetForKeyRange(low, high, inclusion, chval, cherr)
 	return chval, cherr, api.Asc
+}
+
+func (ldb *LevelDBEngine) GetKeySetForKeyRange(low api.Key, high api.Key,
+	inclusion api.Inclusion, chkey chan api.Key, cherr chan error) {
+
+	defer close(chkey)
+	defer close(cherr)
+
+	snap := ldb.c.NewSnapshot()
+	defer ldb.c.ReleaseSnapshot(snap)
+
+	ro := levigo.NewReadOptions()
+	ro.SetSnapshot(snap)
+
+	it := ldb.c.NewIterator(ro)
+	defer it.Close()
+
+	if api.DebugLog {
+		log.Printf("LevelDB Received Key Low - %s High - %s for Scan", low.String(), high.String())
+	}
+
+	var lowkey []byte
+	var err error
+
+	if lowkey = low.EncodedBytes(); lowkey == nil {
+		it.SeekToFirst()
+	} else {
+		it.Seek(lowkey)
+	}
+
+	var key api.Key
+	for it = it; it.Valid(); it.Next() {
+		if key, err = api.NewKeyFromEncodedBytes(it.Key()); err != nil {
+			log.Printf("Error Converting from bytes %v to key %v. Skipping row", it.Key(), err)
+			continue
+		}
+
+		if api.DebugLog {
+			log.Printf("LevelDB Got Key - %s", key.String())
+		}
+
+		var highcmp int
+		if high.EncodedBytes() == nil {
+			highcmp = -1 //if high key is nil, iterate through the fullset
+		} else {
+			highcmp = key.Compare(high)
+		}
+
+		var lowcmp int
+		if low.EncodedBytes() == nil {
+			lowcmp = 1 //all keys are greater than nil
+		} else {
+			lowcmp = key.Compare(low)
+		}
+
+		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Key Equal to High Key")
+			}
+			chkey <- key
+		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Key Equal to Low Key")
+			}
+			chkey <- key
+		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
+			if highcmp == -1 {
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Key Lesser Than High Key")
+				}
+			} else if lowcmp == 1 {
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Key Greater Than Low Key")
+				}
+			}
+			chkey <- key
+		} else {
+			if api.DebugLog {
+				log.Printf("LevelDB not Sending Key")
+			}
+			//if we have reached past the high key, no need to scan further
+			if highcmp == 1 {
+				break
+			}
+		}
+	}
+
+	//FIXME
+	/*
+	   if err := it.GetError() {
+	       log.Printf("Error %v", err)
+	       return err
+	   }
+	*/
+
+}
+
+func (ldb *LevelDBEngine) GetValueSetForKeyRange(low api.Key, high api.Key,
+	inclusion api.Inclusion, chval chan api.Value, cherr chan error) {
+
+	defer close(chval)
+	defer close(cherr)
+
+	snap := ldb.c.NewSnapshot()
+	defer ldb.c.ReleaseSnapshot(snap)
+
+	ro := levigo.NewReadOptions()
+	ro.SetSnapshot(snap)
+
+	it := ldb.c.NewIterator(ro)
+	defer it.Close()
+
+	if api.DebugLog {
+		log.Printf("LevelDB Received Key Low - %s High - %s Inclusion - %v for Scan", low.String(), high.String(), inclusion)
+	}
+
+	var lowkey []byte
+	var err error
+
+	if lowkey = low.EncodedBytes(); lowkey == nil {
+		it.SeekToFirst()
+	} else {
+		it.Seek(lowkey)
+	}
+
+	var key api.Key
+	var val api.Value
+	for it = it; it.Valid(); it.Next() {
+		if key, err = api.NewKeyFromEncodedBytes(it.Key()); err != nil {
+			log.Printf("Error Converting from bytes %v to key %v. Skipping row", it.Key(), err)
+			continue
+		}
+
+		if val, err = api.NewValueFromEncodedBytes(it.Value()); err != nil {
+			log.Printf("Error Converting from bytes %v to value %v, Skipping row", it.Value(), err)
+			continue
+		}
+
+		if api.DebugLog {
+			log.Printf("LevelDB Got Value - %s", val.String())
+		}
+
+		var highcmp int
+		if high.EncodedBytes() == nil {
+			highcmp = -1 //if high key is nil, iterate through the fullset
+		} else {
+			highcmp = key.Compare(high)
+		}
+
+		var lowcmp int
+		if low.EncodedBytes() == nil {
+			lowcmp = 1 //all keys are greater than nil
+		} else {
+			lowcmp = key.Compare(low)
+		}
+
+		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to High Key")
+			}
+			chval <- val
+		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to Low Key")
+			}
+			chval <- val
+		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
+			if highcmp == -1 {
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Lesser Than High Key")
+				}
+			} else if lowcmp == 1 {
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Greater Than Low Key")
+				}
+			}
+			chval <- val
+		} else {
+			if api.DebugLog {
+				log.Printf("LevelDB not Sending Value")
+			}
+			//if we have reached past the high key, no need to scan further
+			if highcmp == 1 {
+				break
+			}
+		}
+	}
+
+	//FIXME
+	/*
+	   if err := it.GetError() {
+	       log.Printf("Error %v", err)
+	       return err
+	   }
+	*/
+
+}
+
+func (ldb *LevelDBEngine) CountRange(low api.Key, high api.Key, inclusion api.Inclusion) (
+	uint64, error) {
+
+	var count uint64
+
+	snap := ldb.c.NewSnapshot()
+	defer ldb.c.ReleaseSnapshot(snap)
+
+	ro := levigo.NewReadOptions()
+	ro.SetSnapshot(snap)
+
+	it := ldb.c.NewIterator(ro)
+	defer it.Close()
+
+	if api.DebugLog {
+		log.Printf("LevelDB Received Key Low - %s High - %s for Scan", low.String(), high.String())
+	}
+
+	var lowkey []byte
+	var err error
+
+	if lowkey = low.EncodedBytes(); lowkey == nil {
+		it.SeekToFirst()
+	} else {
+		it.Seek(lowkey)
+	}
+
+	var key api.Key
+	for it = it; it.Valid(); it.Next() {
+		if key, err = api.NewKeyFromEncodedBytes(it.Key()); err != nil {
+			log.Printf("Error Converting from bytes %v to key %v. Skipping row", it.Key(), err)
+			continue
+		}
+
+		if api.DebugLog {
+			log.Printf("LevelDB Got Key - %s", key.String())
+		}
+
+		var highcmp int
+		if high.EncodedBytes() == nil {
+			highcmp = -1 //if high key is nil, iterate through the fullset
+		} else {
+			highcmp = key.Compare(high)
+		}
+
+		var lowcmp int
+		if low.EncodedBytes() == nil {
+			lowcmp = 1 //all keys are greater than nil
+		} else {
+			lowcmp = key.Compare(low)
+		}
+
+		if highcmp == 0 && (inclusion == api.Both || inclusion == api.High) {
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to High Key")
+			}
+			count++
+		} else if lowcmp == 0 && (inclusion == api.Both || inclusion == api.Low) {
+			if api.DebugLog {
+				log.Printf("LevelDB Sending Value Equal to Low Key")
+			}
+			count++
+		} else if (highcmp == -1) && (lowcmp == 1) { //key is between high and low
+			if highcmp == -1 {
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Lesser Than High Key")
+				}
+			} else if lowcmp == 1 {
+				if api.DebugLog {
+					log.Printf("LevelDB Sending Value Greater Than Low Key")
+				}
+			}
+			count++
+		} else {
+			if api.DebugLog {
+				log.Printf("LevelDB not Sending Value")
+			}
+			//if we have reached past the high key, no need to scan further
+			if highcmp == 1 {
+				break
+			}
+		}
+	}
+
+	//FIXME
+	/*
+	   if err := it.GetError() {
+	       log.Printf("Error %v", err)
+	       return err
+	   }
+	*/
+
+	return count, nil
 }
