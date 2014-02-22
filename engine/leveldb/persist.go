@@ -102,6 +102,15 @@ func (ldb *LevelDBEngine) InsertMutation(k api.Key, v api.Value) error {
 			return err
 		}
 	}
+
+	//if secondary-key is nil, no further processing is required. If this was a KV insert, nothing needs to be done.
+	//if this was a KV update, only delete old back/main index entry
+	if v.KeyBytes() == nil {
+		if api.DebugLog {
+			log.Printf("Received NIL secondary key. Skipping Index Insert.")
+		}
+		return nil
+	}
 	//FIXME : Handle the case if old-value from backindex matches with the new-value(false mutation). Skip It.
 
 	//set the back index entry <docid, encodedkey>
