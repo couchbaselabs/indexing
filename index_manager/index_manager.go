@@ -16,6 +16,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/couchbaselabs/indexing/api"
 	"github.com/couchbaselabs/indexing/catalog"
@@ -29,11 +30,15 @@ var c catalog.IndexCatalog
 var longPolls = make([]chan string, 0)
 var mutex sync.Mutex
 
-//FIXME Get Node info from command line
-var node = api.NodeInfo{IndexerURL: "http://localhost:8095"}
+var node api.NodeInfo
 var ddlLock sync.Mutex
 
+var options struct {
+	indexerURL string
+}
+
 func main() {
+	argParse()
 	var err error
 
 	// Create index catalog
@@ -147,6 +152,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 
 // /nodes
 func handleNodes(w http.ResponseWriter, r *http.Request) {
+	node = api.NodeInfo{IndexerURL: options.indexerURL}
 	res := api.IndexMetaResponse{Status: api.SUCCESS, Nodes: []api.NodeInfo{node}, Errors: nil}
 	sendResponse(w, res)
 	log.Printf("Nodes list returned %v", node)
@@ -225,4 +231,9 @@ func createMetaResponseFromError(err error) api.IndexMetaResponse {
 		Errors: []api.IndexError{indexerr},
 	}
 	return res
+}
+
+func argParse() {
+	flag.StringVar(&options.indexerURL, "indexerURL", "http://localhost:8095", "Indexer Node URL")
+	flag.Parse()
 }
