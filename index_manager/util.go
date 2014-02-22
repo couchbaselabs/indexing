@@ -45,6 +45,7 @@ func sendCreateToIndexer(indexinfo IndexInfo) error {
 func sendDropToIndexer(uuid string) error {
 
 	var body []byte
+	var resp *http.Response
 	var err error
 
 	// Construct request body.
@@ -55,7 +56,7 @@ func sendDropToIndexer(uuid string) error {
 		bodybuf := bytes.NewBuffer(body)
 		url := node.IndexerURL + "/drop"
 		log.Printf("Posting %v to URL %v", bodybuf, url)
-		if resp, err := httpc.Post(url, "application/json", bodybuf); err == nil {
+		if resp, err = httpc.Post(url, "application/json", bodybuf); err == nil {
 			defer resp.Body.Close()
 			_, err = client.MetaResponse(resp)
 		}
