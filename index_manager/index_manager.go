@@ -152,7 +152,6 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 
 // /nodes
 func handleNodes(w http.ResponseWriter, r *http.Request) {
-	node = api.NodeInfo{IndexerURL: options.indexerURL}
 	res := api.IndexMetaResponse{Status: api.SUCCESS, Nodes: []api.NodeInfo{node}, Errors: nil}
 	sendResponse(w, res)
 	log.Printf("Nodes list returned %v", node)
@@ -236,4 +235,5 @@ func createMetaResponseFromError(err error) api.IndexMetaResponse {
 func argParse() {
 	flag.StringVar(&options.indexerURL, "indexerURL", "http://localhost:8095", "Indexer Node URL")
 	flag.Parse()
+	node = api.NodeInfo{IndexerURL: options.indexerURL}
 }
