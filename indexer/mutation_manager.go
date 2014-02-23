@@ -308,6 +308,7 @@ func (m *MutationManager) manageSeqNotification() {
 	var seq seqNotification
 	openSeqCount := 0
 	ok := true
+	var perfWriteCount int64
 
 	for ok {
 		select {
@@ -321,10 +322,14 @@ func (m *MutationManager) manageSeqNotification() {
 				seqVector[seq.vbucket] = seq.seqno
 				m.sequencemap[seq.indexid] = seqVector
 				openSeqCount += 1
+				perfWriteCount += 1
 				//persist only after SEQ_MAP_PERSIST_INTERVAL
 				if openSeqCount == SEQ_MAP_PERSIST_INTERVAL {
 					m.persistSequenceMap()
 					openSeqCount = 0
+				}
+				if perfWriteCount%10000 == 0 {
+					log.Printf("Processed Mutation %v", perfWriteCount)
 				}
 			}
 		case <-chdrain:

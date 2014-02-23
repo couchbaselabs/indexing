@@ -15,6 +15,8 @@ import (
 	"log"
 )
 
+var perfReadCount int64
+
 // api.Finder interface
 func (ldb *LevelDBEngine) Name() string {
 	return ldb.name
@@ -293,7 +295,9 @@ func (ldb *LevelDBEngine) GetValueSetForKeyRange(low api.Key, high api.Key,
 				break
 			}
 		}
+		perfReadCount += 1
 	}
+	log.Printf("Index Values Read %v", perfReadCount)
 
 	//FIXME
 	/*
