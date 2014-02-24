@@ -41,6 +41,7 @@ func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
 				bmeta = &bucketMeta{
 					indexMap:   make(map[string]*api.IndexInfo),
 					indexExprs: make(map[string][]ast.Expression),
+					vector:     make(api.SequenceVector, api.MAX_VBUCKETS),
 				}
 			}
 			bmeta.indexMap[ii.Uuid] = &indexinfos[i]
@@ -57,13 +58,13 @@ func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
 				log.Printf("error getting sequence vector %v: %v\n", url, err)
 				return false
 			}
-			if len(returnMap) == 0 {
-				log.Printf("error sequence vector empty\n")
-				return false
-			}
 			// Build sequence vector per bucket based on the collection of indexes
 			// defined on the bucket.
-			for _, vector := range returnMap {
+			for uuid, vector := range returnMap {
+				if len(vector) == 0 {
+					log.Printf("error sequence vector empty for %v\n", uuid)
+					return false
+				}
 				for vb, seqno := range vector {
 					if bmeta.vector[vb] == 0 || bmeta.vector[vb] > seqno {
 						bmeta.vector[vb] = seqno
