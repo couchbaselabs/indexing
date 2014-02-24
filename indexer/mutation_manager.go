@@ -341,7 +341,7 @@ func (m *MutationManager) manageSeqNotification() {
 
 func (m *MutationManager) initSequenceMapFromPersistence() {
 
-	var sequenceVector api.SequenceVector
+	sequenceVector := make(api.SequenceVector, api.MAX_VBUCKETS)
 	for idx, engine := range m.enginemap {
 		metaval, err := engine.GetMeta(META_DOC_ID)
 		if err != nil {
