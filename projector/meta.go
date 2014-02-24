@@ -54,7 +54,11 @@ func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
 			c := jsonrpc.NewClient(rpcconn)
 			indexList := api.IndexList{ii.Uuid}
 			if err = c.Call(GETSEQUENCE_VECTOR, &indexList, &returnMap); err != nil {
-				log.Printf("getting sequence vector %v: %v\n", url, err)
+				log.Printf("error getting sequence vector %v: %v\n", url, err)
+				return false
+			}
+			if len(returnMap) == 0 {
+				log.Printf("error sequence vector empty\n")
 				return false
 			}
 			// Build sequence vector per bucket based on the collection of indexes
