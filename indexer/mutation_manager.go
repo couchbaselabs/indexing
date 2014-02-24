@@ -54,7 +54,7 @@ const MAX_MUTATION_WORKERS = 8
 const MAX_WORKER_QUEUE = 1000
 const MAX_SEQUENCE_QUEUE = 50000
 const META_DOC_ID = "."
-const SEQ_MAP_PERSIST_INTERVAL = 10 //number of mutations after which sequence map is persisted
+const SEQ_MAP_PERSIST_INTERVAL = 1 //number of mutations after which sequence map is persisted
 
 var mutationMgr MutationManager
 
