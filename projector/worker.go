@@ -157,9 +157,9 @@ loop:
 				//x := count % len(bw.mclients[uuid])
 				bw.mclients[uuid][x].mch <- &m
 				count++
-				if count%10000 == 0 {
-					log.Println("Count:", count)
-				}
+				//if count%10000 == 0 {
+				//    log.Println("Count:", count)
+				//}
 			}
 		case <-kill:
 			break loop
