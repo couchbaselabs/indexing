@@ -16,153 +16,153 @@
 package api
 
 import (
-    "log"
-    "io"
+	"io"
+	"log"
 )
 
 const (
-    levelDebug byte = iota
-    levelWarn  byte = iota
-    levelInfo  byte = iota
+	levelDebug byte = iota
+	levelWarn  byte = iota
+	levelInfo  byte = iota
 )
 
 // Loglevel for seconday index.
 var loglevel byte
 
 func SetLoglevel(level string) {
-    switch level {
-    case "debug":
-        loglevel = levelDebug
-    case "warn":
-        loglevel = levelWarn
-    case "info":
-        loglevel = levelInfo
-    }
+	switch level {
+	case "debug":
+		loglevel = levelDebug
+	case "warn":
+		loglevel = levelWarn
+	case "info":
+		loglevel = levelInfo
+	}
 }
 
 // Debug logs with log.Print() if log-level is greater than or equal to
 // levelDebug
 func Debug(v ...interface{}) {
-    if loglevel >= levelDebug {
-        log.Print(v...)
-    }
+	if loglevel >= levelDebug {
+		log.Print(v...)
+	}
 }
 
 // Debugf logs with log.Printf() if log-level is greater than or equal to
 // levelDebug
 func Debugf(format string, v ...interface{}) {
-    if loglevel >= levelDebug {
-        log.Printf(format, v...)
-    }
+	if loglevel >= levelDebug {
+		log.Printf(format, v...)
+	}
 }
 
 // Debugln logs with log.Println() if log-level is greater than or equal to
 // levelDebug
 func Debugln(v ...interface{}) {
-    if loglevel >= levelDebug {
-        log.Println(v...)
-    }
+	if loglevel >= levelDebug {
+		log.Println(v...)
+	}
 }
 
 // Warn logs with log.Print() if log-level is greater than or equal to
 // levelWarn
 func Warn(v ...interface{}) {
-    if loglevel >= levelWarn {
-        log.Print(v...)
-    }
+	if loglevel >= levelWarn {
+		log.Print(v...)
+	}
 }
 
 // Warnf logs with log.Printf() if log-level is greater than or equal to
 // levelWarn
 func Warnf(format string, v ...interface{}) {
-    if loglevel >= levelWarn {
-        log.Printf(format, v...)
-    }
+	if loglevel >= levelWarn {
+		log.Printf(format, v...)
+	}
 }
 
 // Warnln logs with log.Println() if log-level is greater than or equal to
 // levelWarn
 func Warnln(v ...interface{}) {
-    if loglevel >= levelWarn {
-        log.Println(v...)
-    }
+	if loglevel >= levelWarn {
+		log.Println(v...)
+	}
 }
 
 // Info logs with log.Print() if log-level is greater than or equal to
 // levelInfo
 func Info(v ...interface{}) {
-    if loglevel >= levelInfo {
-        log.Print(v...)
-    }
+	if loglevel >= levelInfo {
+		log.Print(v...)
+	}
 }
 
 // Infof logs with log.Printf() if log-level is greater than or equal to
 // levelInfo
 func Infof(format string, v ...interface{}) {
-    if loglevel >= levelInfo {
-        log.Printf(format, v...)
-    }
+	if loglevel >= levelInfo {
+		log.Printf(format, v...)
+	}
 }
 
 // Infoln logs with log.Println() if log-level is greater than or equal to
 // levelInfo
 func Infoln(v ...interface{}) {
-    if loglevel >= levelInfo {
-        log.Println(v...)
-    }
+	if loglevel >= levelInfo {
+		log.Println(v...)
+	}
 }
 
 // Fatal is proxy for log.Fatal()
 func Fatal(v ...interface{}) {
-    log.Fatal(v...)
+	log.Fatal(v...)
 }
 
 // Fatalf is proxy for log.Fatalf()
 func Fatalf(format string, v ...interface{}) {
-    log.Fatalf(format, v...)
+	log.Fatalf(format, v...)
 }
 
 // Fatalln is proxy for log.Fatalln()
 func Fatalln(v ...interface{}) {
-    log.Fatalln(v...)
+	log.Fatalln(v...)
 }
 
 // Panic is proxy for log.Panic()
 func Panic(v ...interface{}) {
-    log.Panic(v...)
+	log.Panic(v...)
 }
 
 // Panicf is proxy for log.Panicf()
 func Panicf(format string, v ...interface{}) {
-    log.Panicf(format, v...)
+	log.Panicf(format, v...)
 }
 
 // Panicln is proxy for log.Panicln()
 func Panicln(v ...interface{}) {
-    log.Panicln(v...)
+	log.Panicln(v...)
 }
 
 // Flags is proxy for log.Flags()
 func Flags() int {
-    return log.Flags()
+	return log.Flags()
 }
 
 // Prefix is proxy for log.Prefix()
 func Prefix() string {
-    return log.Prefix()
+	return log.Prefix()
 }
 
 // SetFlags is proxy for log.SetFlags()
 func SetFlags(flag int) {
-    log.SetFlags(flag)
+	log.SetFlags(flag)
 }
 
 // SetOutput is proxy for log.SetOutput()
 func SetOutput(w io.Writer) {
-    log.SetOutput(w)
+	log.SetOutput(w)
 }
 
 // Flags is proxy for log.Flags()
 func SetPrefix(prefix string) {
-    log.SetPrefix(prefix)
+	log.SetPrefix(prefix)
 }
