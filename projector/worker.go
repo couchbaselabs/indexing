@@ -104,7 +104,7 @@ func (bw *BucketWorker) run(quit chan interface{}, kill chan bool) {
 		}
 	}
 
-	tryConnection(func() bool {
+	api.TryConnection(1 /*initial-interval*/, 30 /*maximum*/, func() bool {
 		// Refresh the pool to get any new buckets created on the server.
 		if pool, err = bw.client.GetPool("default"); err != nil {
 			log.Println("Error getting pool", err)

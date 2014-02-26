@@ -15,7 +15,6 @@ import (
 	"log"
 	"net"
 	"net/rpc/jsonrpc"
-	"time"
 )
 
 func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
