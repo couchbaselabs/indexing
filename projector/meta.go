@@ -18,10 +18,6 @@ import (
 	"time"
 )
 
-// exponential backoff while connection retry.
-const initialRetryInterval = 1 * time.Second
-const maximumRetryInterval = 30 * time.Second
-
 func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
 	var rpcconn net.Conn
 	var returnMap api.IndexSequenceMap
@@ -29,7 +25,7 @@ func (p *projectorInfo) getMetaData() (serverUuid string, err error) {
 	var ex ast.Expression
 
 	bmap := make(bucketMap)
-	tryConnection(func() bool {
+	api.TryConnection(1 /*initial-interval*/, 30 /*maximum*/, func() bool {
 		// Create a map of indexinfos structured around buckets.
 		if serverUuid, indexinfos, err = p.imanager.List(""); err != nil {
 			log.Println("Error getting list:", err)
@@ -101,19 +97,4 @@ func (p *projectorInfo) waitNotify(serverUuid string, quit chan interface{}) {
 }
 
 func (p *projectorInfo) close() {
-}
-
-func tryConnection(fn func() bool) {
-	retryInterval := initialRetryInterval
-	for {
-		ok := fn()
-		if ok {
-			return
-		}
-		log.Printf("Retrying after %v seconds ...\n", retryInterval)
-		<-time.After(retryInterval)
-		if retryInterval *= 2; retryInterval > maximumRetryInterval {
-			retryInterval = maximumRetryInterval
-		}
-	}
 }
