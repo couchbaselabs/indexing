@@ -180,9 +180,7 @@ func (c *catalog) Index(uuid string) (api.IndexInfo, error) {
 }
 
 func (c *catalog) Exists(name string, bucket string) error {
-
 	for _, indexinfo := range c.indexes {
-
 		if name == indexinfo.Name && bucket == indexinfo.Bucket {
 			return errors.New(fmt.Sprintf("Index %s already exists with UUID %s", name, indexinfo.Uuid))
 		}
