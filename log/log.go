@@ -112,6 +112,30 @@ func Infoln(v ...interface{}) {
 	}
 }
 
+// Print logs with log.Print() if log-level is greater than or equal to
+// levelInfo
+func Print(v ...interface{}) {
+	if loglevel >= levelInfo {
+		log.Print(v...)
+	}
+}
+
+// Printf logs with log.Printf() if log-level is greater than or equal to
+// levelInfo
+func Printf(format string, v ...interface{}) {
+	if loglevel >= levelInfo {
+		log.Printf(format, v...)
+	}
+}
+
+// Println logs with log.Println() if log-level is greater than or equal to
+// levelInfo
+func Println(v ...interface{}) {
+	if loglevel >= levelInfo {
+		log.Println(v...)
+	}
+}
+
 // Fatal is proxy for log.Fatal()
 func Fatal(v ...interface{}) {
 	log.Fatal(v...)
