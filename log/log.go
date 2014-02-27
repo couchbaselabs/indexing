@@ -27,7 +27,7 @@ const (
 )
 
 // Loglevel for seconday index.
-var loglevel byte
+var loglevel = levelInfo
 
 func SetLoglevel(level string) {
 	switch level {
