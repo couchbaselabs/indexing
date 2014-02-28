@@ -14,9 +14,6 @@
 //   send one or more request and wait for one or more response.
 //   Opaque field in the CAP message is used to differentiate simultaneous
 //   requests and outstanding response.
-//
-// Check basic.proto first to learn about basic data primitives used in CAP
-// messages.
 
 package cap;
 
