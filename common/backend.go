@@ -25,16 +25,6 @@ type TraitInfo struct {
 	WorstSpace Complexity
 }
 
-// Inclusion controls how the boundaries values of a range are treated
-type Inclusion int
-
-const (
-	Neither Inclusion = iota
-	Low
-	High
-	Both
-)
-
 // Uniqueness, characterizes if the algorithm demands unique keys
 type Uniqueness bool
 

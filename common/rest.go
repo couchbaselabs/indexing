@@ -39,15 +39,7 @@ type IndexRequest struct {
 	Params     QueryParams `json:"params,omitempty"`
 }
 
-// URL encoded query params
-type QueryParams struct {
-	ScanType  ScanType  `json:"scanType,omitempty"`
-	Low       [][]byte  `json:"low,omitempty"`
-	High      [][]byte  `json:"high,omitempty"`
-	Inclusion Inclusion `json:"inclusion,omitempty"`
-	Limit     int64     `json:"limit,omitempty"`
-}
-
+// TODO: This is now merged into CAP commands, can be removed
 type ScanType string
 
 const (
@@ -58,6 +50,25 @@ const (
 	FULLSCAN   ScanType = "fullScan"
 	RANGECOUNT ScanType = "rangeCount"
 )
+
+// Inclusion controls how the boundaries values of a range are treated
+type Inclusion int
+
+const (
+	Neither Inclusion = iota
+	Low
+	High
+	Both
+)
+
+// URL encoded query params
+type QueryParams struct {
+	ScanType  ScanType  `json:"scanType,omitempty"`
+	Low       [][]byte  `json:"low,omitempty"`
+	High      [][]byte  `json:"high,omitempty"`
+	Inclusion Inclusion `json:"inclusion,omitempty"`
+	Limit     int64     `json:"limit,omitempty"`
+}
 
 //RESPONSE DATA FORMATS
 type ResponseStatus string
