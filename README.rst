@@ -26,4 +26,4 @@ Compile protobuf for secondary index,
 Benchmark,
 
 .. code-block:: bash
-    go test -test.bench=.
+    make bench
